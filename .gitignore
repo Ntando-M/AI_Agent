@@ -1,0 +1,25 @@
+# Environment variables
+.env
+
+# Environment variables
+
+venv/
+.venv/
+env/
+
+# Database files
+
+chat_history.db
+
+# Python files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
