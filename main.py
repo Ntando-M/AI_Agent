@@ -1,13 +1,10 @@
 from dotenv import load_dotenv
 
-import json
+from models.response_models import AIResponse
+
 import re
 
-from typing import Literal
-
-from pydantic import BaseModel, Field
-
-from groq import Groq
+from llm.router import get_llm_response
 
 from langchain_core.messages import (
     SystemMessage,
@@ -21,6 +18,11 @@ from langchain_community.chat_message_histories import (
 
 from sqlalchemy import create_engine, inspect, text
 
+from config import LLM_PROVIDER
+
+from llm.groq_provider import get_groq_model
+
+from llm.ollama_provider import get_ollama_model
 
 # ============================================================
 # CONFIGURATION
@@ -32,111 +34,11 @@ DATABASE_URL = "sqlite:///chat_history.db"
 
 DEFAULT_SESSION = "default_session"
 
-MODEL_NAME = "openai/gpt-oss-20b"
-
-
 # ============================================================
 # DATABASE
 # ============================================================
 
 engine = create_engine(DATABASE_URL)
-
-
-# ============================================================
-# GROQ CLIENT
-# ============================================================
-
-groq_client = Groq()
-
-
-# ============================================================
-# PYDANTIC RESPONSE MODEL
-# ============================================================
-
-class AIResponse(BaseModel):
-    """
-    Defines the structure we expect from the LLM.
-    """
-
-    answer: str = Field(
-        description="The complete answer to the user's question"
-    )
-
-    topic: str = Field(
-        description="The main topic of the user's question"
-    )
-
-    difficulty: Literal[
-        "beginner",
-        "intermediate",
-        "advanced"
-    ] = Field(
-        description="The estimated difficulty of the user's question"
-    )
-
-    confidence: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="The model's confidence in the answer from 0.0 to 1.0"
-    )
-
-
-# ============================================================
-# JSON SCHEMA FOR GROQ
-# ============================================================
-
-AI_RESPONSE_SCHEMA = {
-    "type": "object",
-
-    "properties": {
-
-        "answer": {
-            "type": "string",
-            "description": (
-                "The complete answer to the user's question"
-            )
-        },
-
-        "topic": {
-            "type": "string",
-            "description": (
-                "The main topic of the user's question"
-            )
-        },
-
-        "difficulty": {
-            "type": "string",
-            "enum": [
-                "beginner",
-                "intermediate",
-                "advanced"
-            ],
-            "description": (
-                "The estimated difficulty of the user's question"
-            )
-        },
-
-        "confidence": {
-            "type": "number",
-            "minimum": 0.0,
-            "maximum": 1.0,
-            "description": (
-                "The model's confidence in the answer "
-                "from 0.0 to 1.0"
-            )
-        }
-    },
-
-    "required": [
-        "answer",
-        "topic",
-        "difficulty",
-        "confidence"
-    ],
-
-    "additionalProperties": False
-}
-
 
 # ============================================================
 # SYSTEM PROMPT
@@ -168,6 +70,168 @@ for the user's question.
 Do not mention the internal JSON structure to the user.
 """
 
+# ============================================================
+# LLM Provider MANAGEMENT
+# ============================================================
+def select_llm_provider():
+    """
+    Display the LLM provider selection menu.
+
+    The provider configured in .env is used as the default.
+    The selected provider and model are displayed before
+    the session begins.
+    """
+
+    default_provider = LLM_PROVIDER
+
+    # --------------------------------------------------------
+    # Validate .env configuration
+    # --------------------------------------------------------
+
+    if default_provider not in ("groq", "ollama"):
+
+        print(
+            "\n[WARNING] Invalid LLM_PROVIDER in .env:"
+            f" '{default_provider}'"
+        )
+
+        print(
+            "[INFO] Falling back to Groq."
+        )
+
+        default_provider = "groq"
+
+    # --------------------------------------------------------
+    # Get model names from provider modules
+    # --------------------------------------------------------
+
+    groq_model = get_groq_model()
+    ollama_model = get_ollama_model()
+
+    default_model = (
+        groq_model
+        if default_provider == "groq"
+        else ollama_model
+    )
+
+    # --------------------------------------------------------
+    # Display menu
+    # --------------------------------------------------------
+
+    print("\n")
+    print("=" * 60)
+    print("AI DATA ANALYST CHATBOT - SELECT LLM PROVIDER")
+    print("=" * 60)
+
+    print(
+        f"\nDefault provider: {default_provider.capitalize()}"
+    )
+
+    print(
+        f"Default model:    {default_model}"
+    )
+
+    print("\nAvailable providers:")
+
+    print(
+        f"1. Groq   → {groq_model}"
+    )
+
+    print(
+        f"2. Ollama → {ollama_model}"
+    )
+
+    print("3. Exit")
+
+    print("=" * 60)
+
+    # --------------------------------------------------------
+    # User selection
+    # --------------------------------------------------------
+
+    while True:
+
+        choice = input(
+            "Select an option "
+            f"[Enter = {default_provider.capitalize()}]: "
+        ).strip()
+
+        # ----------------------------------------------------
+        # Use .env default
+        # ----------------------------------------------------
+
+        if not choice:
+
+            selected_provider = default_provider
+
+            break
+
+        # ----------------------------------------------------
+        # Groq
+        # ----------------------------------------------------
+
+        if choice == "1":
+
+            selected_provider = "groq"
+
+            break
+
+        # ----------------------------------------------------
+        # Ollama
+        # ----------------------------------------------------
+
+        if choice == "2":
+
+            selected_provider = "ollama"
+
+            break
+
+        # ----------------------------------------------------
+        # Exit
+        # ----------------------------------------------------
+
+        if choice == "3":
+
+            print("\nGoodbye!")
+
+            return None
+
+        # ----------------------------------------------------
+        # Invalid option
+        # ----------------------------------------------------
+
+        print(
+            "\n[ERROR] Invalid selection."
+        )
+
+        print(
+            "Please choose 1, 2, 3, or press Enter "
+            "to use the default."
+        )
+
+    # --------------------------------------------------------
+    # Determine selected model
+    # --------------------------------------------------------
+
+    selected_model = (
+        groq_model
+        if selected_provider == "groq"
+        else ollama_model
+    )
+
+    # --------------------------------------------------------
+    # Display active configuration
+    # --------------------------------------------------------
+
+    print(
+        f"\n[OK] Using {selected_provider.capitalize()}"
+    )
+
+    print(
+        f"[OK] Model: {selected_model}"
+    )
+
+    return selected_provider
 
 # ============================================================
 # SESSION MANAGEMENT
@@ -291,6 +355,25 @@ def create_new_session():
 
         return session_id
 
+# ========================================================
+    # SELECT LLM PROVIDER
+    # ========================================================
+
+    selected_provider = select_llm_provider()
+
+    if selected_provider is None:
+
+        return
+
+    # ========================================================
+    # SELECT SESSION
+    # ========================================================
+
+    session_id = select_session()
+
+    if session_id is None:
+
+        return
 
 def select_session():
     """
@@ -425,147 +508,22 @@ def select_session():
 
 
 # ============================================================
-# CONVERT LANGCHAIN MESSAGES TO GROQ FORMAT
+# CALL LLM PROVIDER
 # ============================================================
-
-def convert_messages(messages):
+def get_ai_response(provider,messages):
     """
-    Convert LangChain message objects into the format
-    expected by the Groq Chat Completions API.
-    """
-
-    converted_messages = []
-
-    for message in messages:
-
-        # ----------------------------------------------------
-        # System message
-        # ----------------------------------------------------
-
-        if isinstance(
-            message,
-            SystemMessage
-        ):
-
-            role = "system"
-
-        # ----------------------------------------------------
-        # Human message
-        # ----------------------------------------------------
-
-        elif isinstance(
-            message,
-            HumanMessage
-        ):
-
-            role = "user"
-
-        # ----------------------------------------------------
-        # AI message
-        # ----------------------------------------------------
-
-        elif isinstance(
-            message,
-            AIMessage
-        ):
-
-            role = "assistant"
-
-        # ----------------------------------------------------
-        # Ignore unsupported message types
-        # ----------------------------------------------------
-
-        else:
-
-            continue
-
-        converted_messages.append(
-            {
-                "role": role,
-                "content": message.content
-            }
-        )
-
-    return converted_messages
-
-
-# ============================================================
-# CALL GROQ
-# ============================================================
-
-def get_ai_response(messages):
-    """
-    Send the conversation to Groq and return
-    a validated Pydantic AIResponse object.
+    Get an AI response from the configured provider
+    and validate it using the application response model.
     """
 
-    # --------------------------------------------------------
-    # Convert LangChain messages
-    # --------------------------------------------------------
-
-    groq_messages = convert_messages(
+    response_data = get_llm_response(
+        provider,
         messages
     )
 
-    # --------------------------------------------------------
-    # Call Groq
-    # --------------------------------------------------------
-
-    response = groq_client.chat.completions.create(
-
-        model=MODEL_NAME,
-
-        messages=groq_messages,
-
-        temperature=0,
-
-        response_format={
-            "type": "json_schema",
-
-            "json_schema": {
-
-                "name": "ai_response",
-
-                "strict": True,
-
-                "schema": AI_RESPONSE_SCHEMA
-            }
-        }
-    )
-
-    # --------------------------------------------------------
-    # Extract JSON content
-    # --------------------------------------------------------
-
-    content = response.choices[
-        0
-    ].message.content
-
-    if not content:
-
-        raise ValueError(
-            "Groq returned an empty response."
-        )
-
-    # --------------------------------------------------------
-    # Parse JSON
-    # --------------------------------------------------------
-
-    response_data = json.loads(
-        content
-    )
-
-    # --------------------------------------------------------
-    # Validate using Pydantic
-    # --------------------------------------------------------
-
-    ai_response = AIResponse.model_validate(
+    return AIResponse.model_validate(
         response_data
     )
-
-    return ai_response
-
-
 # ============================================================
 # DISPLAY RESPONSE
 # ============================================================
@@ -656,6 +614,16 @@ def display_history(history):
 
 def main():
 
+    # ========================================================
+    # SELECT LLM PROVIDER
+    # ========================================================
+
+    selected_provider = select_llm_provider()
+
+    if selected_provider is None:
+
+        return 
+    
     # ========================================================
     # SELECT SESSION
     # ========================================================
@@ -838,18 +806,19 @@ def main():
         try:
 
             ai_response = get_ai_response(
+                selected_provider,
                 messages
             )
 
         # ----------------------------------------------------
-        # Groq/API errors
+        # LLM_Provider API errors
         # ----------------------------------------------------
 
         except Exception as e:
 
             print(
                 "\n[ERROR] Error communicating "
-                "with Groq:"
+                f"with {selected_provider.capitalize()}:"
             )
 
             print(e)
