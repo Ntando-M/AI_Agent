@@ -11,6 +11,9 @@ env/
 
 chat_history.db
 
+chroma_db/*
+!chroma_db/.gitkeep
+
 # Python files
 __pycache__/
 *.py[cod]
