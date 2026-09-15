@@ -24,6 +24,8 @@ from llm.groq_provider import get_groq_model
 
 from llm.ollama_provider import get_ollama_model
 
+from rag.retriever import retrieve_relevant_chunks, format_context_for_prompt
+
 # ============================================================
 # CONFIGURATION
 # ============================================================
@@ -47,26 +49,15 @@ engine = create_engine(DATABASE_URL)
 SYSTEM_PROMPT = """
 You are a helpful, accurate, and professional AI assistant.
 
-Your job is to answer the user's questions clearly and accurately.
+When provided with "Context Information", you must use it to answer the user's question. 
+Distinguish clearly between retrieved evidence and unsupported claims. If the answer is not contained within the context, do not invent an answer; state that the information is not available in the documents.
 
-In addition to answering the question, classify the user's question
-according to the following fields:
+In addition to answering the question, classify the user's question according to the following fields:
+1. topic (Identify the primary subject)
+2. difficulty (beginner, intermediate, advanced)
+3. confidence (A value between 0.0 and 1.0)
 
-1. topic
-   - Identify the primary subject of the user's question.
-
-2. difficulty
-   - beginner
-   - intermediate
-   - advanced
-
-3. confidence
-   - A value between 0.0 and 1.0 representing your confidence
-     in the accuracy of your answer.
-
-The answer should be useful, practical, and appropriately detailed
-for the user's question.
-
+The answer should be useful, practical, and appropriately detailed.
 Do not mention the internal JSON structure to the user.
 """
 
@@ -766,17 +757,32 @@ def main():
             continue
 
         # ====================================================
+        # RETRIEVE DOCUMENT CONTEXT
+        # ====================================================
+        print("\n[INFO] Searching documents...")
+        retrieved_chunks = retrieve_relevant_chunks(user_input)
+        context_text = format_context_for_prompt(retrieved_chunks)
+
+        # ====================================================
         # BUILD MESSAGE HISTORY
         # ====================================================
-
         messages = [
-
-            SystemMessage(
-                content=SYSTEM_PROMPT
-            )
-
+            SystemMessage(content=SYSTEM_PROMPT)
         ]
 
+        messages.extend(history.messages)
+
+        # Inject context directly into the current human message
+        augmented_user_input = (
+            f"Context Information:\n{context_text}\n\n"
+            f"User Question:\n{user_input}"
+        )
+
+        messages.append(
+            HumanMessage(content=augmented_user_input)
+        )
+
+        
         # ----------------------------------------------------
         # Add previous conversation
         # ----------------------------------------------------
