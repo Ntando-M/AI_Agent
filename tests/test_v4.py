@@ -1,18 +1,41 @@
-import pandas as pd
-from data_analysis.loader import load_csv, profile_dataframe
 import json
 
-# Create a sample dataset for testing
-sample_df = pd.DataFrame({
-    "Date": ["2026-01-01", "2026-01-02", "2026-01-03", "invalid_date"],
-    "Product": ["Laptop", "Mouse", "Keyboard", "Laptop"],
-    "Revenue": [1200, 25, 45, None]
-})
+from data_analysis.loader import load_csv, load_excel
+from data_analysis.profiler import profile_dataframe
 
-sample_df.to_csv("sample.csv", index=False)
 
-# Test the loader and profiler
-df = load_csv("sample.csv")
+# Test CSV loading
+csv_path = "data/sample.csv"
+
+df = load_csv(csv_path)
+
+print("CSV loaded successfully")
+print("Rows:", len(df))
+print("Columns:", list(df.columns))
+
+
+# Test profiling
 profile = profile_dataframe(df)
 
-print(json.dumps(profile, indent=2))
+print("\nDataFrame profile:")
+print(json.dumps(profile, indent=2, default=str))
+
+
+# Test Excel loading
+excel_path = "data/sample_sales.xlsx"
+
+excel_df = load_excel(excel_path)
+
+print("\nExcel loaded successfully")
+print("Rows:", len(excel_df))
+print("Columns:", list(excel_df.columns))
+
+
+# Test Excel profiling
+excel_profile = profile_dataframe(excel_df)
+
+print("\nExcel profile:")
+print(json.dumps(excel_profile, indent=2, default=str))
+
+
+print("\nV4 loader and profiler tests completed successfully.")
