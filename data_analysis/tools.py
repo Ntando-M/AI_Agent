@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 from typing import Any
 
 import pandas as pd
 
 from data_analysis.analyzer import (
     aggregate_dataset,
+    calculate_missing_percentage,
+    calculate_monthly_revenue,
     calculate_statistics,
     filter_dataset,
     get_unique_values,
@@ -11,15 +15,16 @@ from data_analysis.analyzer import (
     inspect_dataset,
     sort_dataset,
 )
-
 from data_analysis.tool_models import (
     AggregateDatasetInput,
     CalculateStatisticsInput,
     FilterDatasetInput,
+    GetUniqueValuesInput,
     GroupByColumnInput,
     InspectDatasetInput,
+    MissingPercentageInput,
+    MonthlyRevenueInput,
     SortDatasetInput,
-    UniqueValuesInput,
 )
 
 
@@ -27,10 +32,6 @@ def run_inspect_dataset(
     df: pd.DataFrame,
     inputs: InspectDatasetInput,
 ) -> dict[str, Any]:
-    """
-    Controlled wrapper for inspect_dataset.
-    """
-
     return inspect_dataset(df)
 
 
@@ -38,28 +39,20 @@ def run_filter_dataset(
     df: pd.DataFrame,
     inputs: FilterDatasetInput,
 ) -> pd.DataFrame:
-    """
-    Controlled wrapper for filter_dataset.
-    """
-
     return filter_dataset(
         df,
-        column=inputs.column,
-        value=inputs.value,
+        inputs.column,
+        inputs.value,
     )
 
 
 def run_get_unique_values(
     df: pd.DataFrame,
-    inputs: UniqueValuesInput,
+    inputs: GetUniqueValuesInput,
 ) -> list[Any]:
-    """
-    Controlled wrapper for get_unique_values.
-    """
-
     return get_unique_values(
         df,
-        column=inputs.column,
+        inputs.column,
     )
 
 
@@ -67,14 +60,10 @@ def run_aggregate_dataset(
     df: pd.DataFrame,
     inputs: AggregateDatasetInput,
 ) -> float:
-    """
-    Controlled wrapper for aggregate_dataset.
-    """
-
     return aggregate_dataset(
         df,
-        column=inputs.column,
-        operation=inputs.operation,
+        inputs.column,
+        inputs.operation,
     )
 
 
@@ -82,13 +71,9 @@ def run_calculate_statistics(
     df: pd.DataFrame,
     inputs: CalculateStatisticsInput,
 ) -> dict[str, float]:
-    """
-    Controlled wrapper for calculate_statistics.
-    """
-
     return calculate_statistics(
         df,
-        column=inputs.column,
+        inputs.column,
     )
 
 
@@ -96,15 +81,11 @@ def run_group_by_column(
     df: pd.DataFrame,
     inputs: GroupByColumnInput,
 ) -> pd.DataFrame:
-    """
-    Controlled wrapper for group_by_column.
-    """
-
     return group_by_column(
         df,
-        group_column=inputs.group_column,
-        aggregation_column=inputs.aggregation_column,
-        operation=inputs.operation,
+        inputs.group_column,
+        inputs.aggregation_column,
+        inputs.operation,
     )
 
 
@@ -112,12 +93,26 @@ def run_sort_dataset(
     df: pd.DataFrame,
     inputs: SortDatasetInput,
 ) -> pd.DataFrame:
-    """
-    Controlled wrapper for sort_dataset.
-    """
-
     return sort_dataset(
         df,
-        column=inputs.column,
-        ascending=inputs.ascending,
+        inputs.column,
+        inputs.ascending,
     )
+
+
+def run_calculate_monthly_revenue(
+    df: pd.DataFrame,
+    inputs: MonthlyRevenueInput,
+) -> pd.DataFrame:
+    return calculate_monthly_revenue(
+        df,
+        inputs.date_column,
+        inputs.revenue_column,
+    )
+
+
+def run_calculate_missing_percentage(
+    df: pd.DataFrame,
+    inputs: MissingPercentageInput,
+) -> float:
+    return calculate_missing_percentage(df)

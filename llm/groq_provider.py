@@ -124,7 +124,31 @@ def convert_messages(messages):
 
     return converted_messages
 
+# ============================================================
+# Groq raw response
+# ============================================================
 
+def get_groq_raw_response(messages):
+    groq_messages = convert_messages(
+        messages
+    )
+
+    response = groq_client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=groq_messages,
+        temperature=0,
+    )
+
+    content = response.choices[
+        0
+    ].message.content
+
+    if not content:
+        raise ValueError(
+            "Groq returned an empty response."
+        )
+
+    return content
 # ============================================================
 # CALL GROQ
 # ============================================================

@@ -1,869 +1,468 @@
-from dotenv import load_dotenv
-
-from models.response_models import AIResponse
-
-import re
-
-from llm.router import get_llm_response
-
+from sqlalchemy import create_engine
+from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import (
     SystemMessage,
     HumanMessage,
-    AIMessage
 )
-
-from langchain_community.chat_message_histories import (
-    SQLChatMessageHistory
-)
-
-from sqlalchemy import create_engine, inspect, text
 
 from config import LLM_PROVIDER
+from data_analysis.agent import DataAnalysisAgent
+from llm.groq_provider import (
+    get_groq_model,
+    get_groq_response,
+    get_groq_raw_response,
+)
 
-from llm.groq_provider import get_groq_model
+from llm.ollama_provider import (
+    get_ollama_model,
+    get_ollama_response,
+    get_ollama_raw_response,
+)
 
-from llm.ollama_provider import get_ollama_model
-
-from rag.retriever import retrieve_relevant_chunks, format_context_for_prompt
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-load_dotenv()
+from llm.router import get_llm_response
+from models.response_models import AIResponse
+from rag.retriever import (
+    retrieve_relevant_chunks,
+    format_context_for_prompt,
+)
 
 DATABASE_URL = "sqlite:///chat_history.db"
-
 DEFAULT_SESSION = "default_session"
+DATASET_PATH = "data/sample_sales.xlsx"
 
-# ============================================================
-# DATABASE
-# ============================================================
-
-engine = create_engine(DATABASE_URL)
-
-# ============================================================
-# SYSTEM PROMPT
-# ============================================================
 
 SYSTEM_PROMPT = """
-You are a helpful, accurate, and professional AI assistant.
+You are a helpful and professional AI assistant.
 
-When provided with "Context Information", you must use it to answer the user's question. 
-Distinguish clearly between retrieved evidence and unsupported claims. If the answer is not contained within the context, do not invent an answer; state that the information is not available in the documents.
+Answer the user's question accurately and clearly.
 
-In addition to answering the question, classify the user's question according to the following fields:
-1. topic (Identify the primary subject)
-2. difficulty (beginner, intermediate, advanced)
-3. confidence (A value between 0.0 and 1.0)
+When retrieved document context is provided, use it when relevant.
+Do not invent information that is not supported by the available
+context or conversation.
 
-The answer should be useful, practical, and appropriately detailed.
-Do not mention the internal JSON structure to the user.
-"""
+Your response must contain:
+- answer
+- topic
+- difficulty
+- confidence
 
-# ============================================================
-# LLM Provider MANAGEMENT
-# ============================================================
-def select_llm_provider():
-    """
-    Display the LLM provider selection menu.
+Difficulty must be one of:
+- beginner
+- intermediate
+- advanced
 
-    The provider configured in .env is used as the default.
-    The selected provider and model are displayed before
-    the session begins.
-    """
+Confidence must be a value between 0 and 1.
+""".strip()
+
+
+def select_llm_provider() -> str:
+    print()
+    print("Select LLM provider:")
+    print("1. Groq")
+    print("2. Ollama")
+    print()
 
     default_provider = LLM_PROVIDER
 
-    # --------------------------------------------------------
-    # Validate .env configuration
-    # --------------------------------------------------------
-
-    if default_provider not in ("groq", "ollama"):
-
-        print(
-            "\n[WARNING] Invalid LLM_PROVIDER in .env:"
-            f" '{default_provider}'"
-        )
-
-        print(
-            "[INFO] Falling back to Groq."
-        )
-
-        default_provider = "groq"
-
-    # --------------------------------------------------------
-    # Get model names from provider modules
-    # --------------------------------------------------------
-
-    groq_model = get_groq_model()
-    ollama_model = get_ollama_model()
-
-    default_model = (
-        groq_model
-        if default_provider == "groq"
-        else ollama_model
-    )
-
-    # --------------------------------------------------------
-    # Display menu
-    # --------------------------------------------------------
-
-    print("\n")
-    print("=" * 60)
-    print("AI DATA ANALYST CHATBOT - SELECT LLM PROVIDER")
-    print("=" * 60)
-
-    print(
-        f"\nDefault provider: {default_provider.capitalize()}"
-    )
-
-    print(
-        f"Default model:    {default_model}"
-    )
-
-    print("\nAvailable providers:")
-
-    print(
-        f"1. Groq   → {groq_model}"
-    )
-
-    print(
-        f"2. Ollama → {ollama_model}"
-    )
-
-    print("3. Exit")
-
-    print("=" * 60)
-
-    # --------------------------------------------------------
-    # User selection
-    # --------------------------------------------------------
-
     while True:
-
         choice = input(
-            "Select an option "
-            f"[Enter = {default_provider.capitalize()}]: "
-        ).strip()
-
-        # ----------------------------------------------------
-        # Use .env default
-        # ----------------------------------------------------
+            f"Enter choice [default: {default_provider}]: "
+        ).strip().lower()
 
         if not choice:
+            choice = default_provider
 
-            selected_provider = default_provider
-
+        if choice in {"1", "groq"}:
+            provider = "groq"
             break
 
-        # ----------------------------------------------------
-        # Groq
-        # ----------------------------------------------------
-
-        if choice == "1":
-
-            selected_provider = "groq"
-
+        if choice in {"2", "ollama"}:
+            provider = "ollama"
             break
-
-        # ----------------------------------------------------
-        # Ollama
-        # ----------------------------------------------------
-
-        if choice == "2":
-
-            selected_provider = "ollama"
-
-            break
-
-        # ----------------------------------------------------
-        # Exit
-        # ----------------------------------------------------
-
-        if choice == "3":
-
-            print("\nGoodbye!")
-
-            return None
-
-        # ----------------------------------------------------
-        # Invalid option
-        # ----------------------------------------------------
 
         print(
-            "\n[ERROR] Invalid selection."
+            "Invalid selection. Please choose 1, 2, groq, or ollama."
         )
 
-        print(
-            "Please choose 1, 2, 3, or press Enter "
-            "to use the default."
-        )
+    if provider == "groq":
+        model = get_groq_model()
+    else:
+        model = get_ollama_model()
 
-    # --------------------------------------------------------
-    # Determine selected model
-    # --------------------------------------------------------
+    print()
+    print(f"Selected provider: {provider}")
+    print(f"Selected model: {model}")
+    print()
 
-    selected_model = (
-        groq_model
-        if selected_provider == "groq"
-        else ollama_model
-    )
+    return provider
 
-    # --------------------------------------------------------
-    # Display active configuration
-    # --------------------------------------------------------
 
-    print(
-        f"\n[OK] Using {selected_provider.capitalize()}"
-    )
+def get_existing_sessions() -> list[str]:
+    engine = create_engine(DATABASE_URL)
 
-    print(
-        f"[OK] Model: {selected_model}"
-    )
-
-    return selected_provider
-
-# ============================================================
-# SESSION MANAGEMENT
-# ============================================================
-
-def get_existing_sessions():
-    """
-    Retrieve all existing session IDs from SQLite.
-
-    If the message_store table does not exist yet,
-    return only the default session.
-    """
-
-    inspector = inspect(engine)
-
-    # --------------------------------------------------------
-    # First application run
-    # --------------------------------------------------------
-
-    if not inspector.has_table("message_store"):
-        return [DEFAULT_SESSION]
-
-    # --------------------------------------------------------
-    # Retrieve sessions
-    # --------------------------------------------------------
-
-    with engine.connect() as connection:
-
-        result = connection.execute(
-            text("""
+    try:
+        with engine.connect() as connection:
+            result = connection.exec_driver_sql(
+                """
                 SELECT DISTINCT session_id
                 FROM message_store
-                WHERE session_id IS NOT NULL
                 ORDER BY session_id
-            """)
-        )
-
-        sessions = [
-            row[0]
-            for row in result
-        ]
-
-    # --------------------------------------------------------
-    # Always include default_session
-    # --------------------------------------------------------
-
-    if DEFAULT_SESSION not in sessions:
-
-        sessions.insert(
-            0,
-            DEFAULT_SESSION
-        )
-
-    return sessions
-
-
-def create_new_session():
-    """
-    Ask the user for a new session name and convert it
-    into a safe session ID.
-    """
-
-    while True:
-
-        name = input(
-            "\nEnter a name for the new session: "
-        ).strip()
-
-        if not name:
-
-            print(
-                "[ERROR] Session name cannot be empty."
+                """
             )
 
-            continue
-
-        # ----------------------------------------------------
-        # Convert name into a safe session ID
-        # ----------------------------------------------------
-
-        session_id = re.sub(
-            r"[^a-zA-Z0-9_-]+",
-            "_",
-            name
-        ).strip("_").lower()
-
-        if not session_id:
-
-            print(
-                "[ERROR] Please enter a valid session name."
-            )
-
-            continue
-
-        # ----------------------------------------------------
-        # Check whether session already exists
-        # ----------------------------------------------------
-
-        existing_sessions = get_existing_sessions()
-
-        if session_id in existing_sessions:
-
-            print(
-                f"\n[WARNING] Session '{session_id}' "
-                f"already exists."
-            )
-
-            use_existing = input(
-                "Use this existing session? (y/n): "
-            ).strip().lower()
-
-            if use_existing == "y":
-
-                return session_id
-
-            continue
-
-        print(
-            f"\n[OK] New session created: {session_id}"
-        )
-
-        return session_id
-
-# ========================================================
-    # SELECT LLM PROVIDER
-    # ========================================================
-
-    selected_provider = select_llm_provider()
-
-    if selected_provider is None:
-
-        return
-
-    # ========================================================
-    # SELECT SESSION
-    # ========================================================
-
-    session_id = select_session()
-
-    if session_id is None:
-
-        return
-
-def select_session():
-    """
-    Display all existing sessions and allow the user to:
-
-    1. Select an existing session
-    2. Create a new session
-    3. Exit
-    """
-
-    sessions = get_existing_sessions()
-
-    while True:
-
-        print("\n")
-        print("=" * 60)
-        print("AI AGENT - SELECT CONVERSATION")
-        print("=" * 60)
-
-        print("\nAvailable sessions:")
-
-        # ----------------------------------------------------
-        # Existing sessions
-        # ----------------------------------------------------
-
-        for index, session in enumerate(
-            sessions,
-            start=1
-        ):
-
-            if session == DEFAULT_SESSION:
-
-                print(
-                    f"{index}. {session} "
-                    f"(default)"
-                )
-
-            else:
-
-                print(
-                    f"{index}. {session}"
-                )
-
-        # ----------------------------------------------------
-        # Additional options
-        # ----------------------------------------------------
-
-        create_option = len(sessions) + 1
-        exit_option = len(sessions) + 2
-
-        print(
-            f"{create_option}. Create new session"
-        )
-
-        print(
-            f"{exit_option}. Exit"
-        )
-
-        print("=" * 60)
-
-        choice = input(
-            "Select an option: "
-        ).strip()
-
-        # ----------------------------------------------------
-        # Validate numeric input
-        # ----------------------------------------------------
-
-        try:
-
-            choice = int(choice)
-
-        except ValueError:
-
-            print(
-                "\n[ERROR] Please enter a number."
-            )
-
-            continue
-
-        # ----------------------------------------------------
-        # Existing session
-        # ----------------------------------------------------
-
-        if 1 <= choice <= len(sessions):
-
-            selected_session = sessions[
-                choice - 1
+            return [
+                row[0]
+                for row in result.fetchall()
             ]
 
-            print("\n" + "-" * 60)
+    except Exception:
+        return []
 
-            print(
-                f"Selected session: "
-                f"{selected_session}"
-            )
+    finally:
+        engine.dispose()
 
-            print("-" * 60)
 
-            return selected_session
+def create_new_session() -> str:
+    print()
+    session_id = input(
+        "Enter a name for the new session: "
+    ).strip()
 
-        # ----------------------------------------------------
-        # Create new session
-        # ----------------------------------------------------
+    if not session_id:
+        return DEFAULT_SESSION
 
-        elif choice == create_option:
+    return session_id
 
+
+def select_session() -> str:
+    sessions = get_existing_sessions()
+
+    if not sessions:
+        print(
+            f"No existing sessions found. "
+            f"Using '{DEFAULT_SESSION}'."
+        )
+        return DEFAULT_SESSION
+
+    print()
+    print("Existing sessions:")
+
+    for index, session in enumerate(
+        sessions,
+        start=1,
+    ):
+        print(f"{index}. {session}")
+
+    print(f"{len(sessions) + 1}. Create new session")
+    print()
+
+    while True:
+        choice = input(
+            "Select a session: "
+        ).strip()
+
+        if not choice:
+            return sessions[0]
+
+        try:
+            selection = int(choice)
+        except ValueError:
+            print("Please enter a valid number.")
+            continue
+
+        if 1 <= selection <= len(sessions):
+            return sessions[selection - 1]
+
+        if selection == len(sessions) + 1:
             return create_new_session()
 
-        # ----------------------------------------------------
-        # Exit
-        # ----------------------------------------------------
+        print("Invalid selection.")
 
-        elif choice == exit_option:
 
-            print(
-                "\nGoodbye!"
-            )
+def get_ai_response(
+    provider: str,
+    messages: list,
+) -> dict:
+    response = get_llm_response(
+        provider,
+        messages,
+    )
 
-            return None
+    validated_response = AIResponse.model_validate(
+        response
+    )
 
-        # ----------------------------------------------------
-        # Invalid option
-        # ----------------------------------------------------
+    return validated_response.model_dump()
+
+
+def display_response(response: dict) -> None:
+    print()
+    print("AI:")
+    print(response["answer"])
+    print()
+    print(f"Topic: {response['topic']}")
+    print(f"Difficulty: {response['difficulty']}")
+    print(f"Confidence: {response['confidence']}")
+    print()
+
+
+def display_history(history) -> None:
+    messages = history.messages
+
+    if not messages:
+        print()
+        print("No conversation history.")
+        print()
+        return
+
+    print()
+    print("Conversation history:")
+    print()
+
+    for message in messages:
+        message_type = message.__class__.__name__
+
+        if message_type == "HumanMessage":
+            print(f"You: {message.content}")
+
+        elif message_type == "AIMessage":
+            print(f"AI: {message.content}")
 
         else:
+            print(f"{message_type}: {message.content}")
 
-            print(
-                f"\n[ERROR] Please enter a number "
-                f"between 1 and {exit_option}."
-            )
+    print()
 
 
-# ============================================================
-# CALL LLM PROVIDER
-# ============================================================
-def get_ai_response(provider,messages):
-    """
-    Get an AI response from the configured provider
-    and validate it using the application response model.
-    """
+def get_data_analysis_response(
+    provider: str,
+    agent: DataAnalysisAgent,
+    question: str,
+) -> dict:
+    def planning_llm_function(messages):
+        if provider == "groq":
+            return get_groq_raw_response(messages)
 
-    response_data = get_llm_response(
-        provider,
-        messages
-    )
+        return get_ollama_raw_response(messages)
 
-    return AIResponse.model_validate(
-        response_data
-    )
-# ============================================================
-# DISPLAY RESPONSE
-# ============================================================
-
-def display_response(response):
-    """
-    Display the validated Pydantic response.
-    """
-
-    print("\nAI:")
-    print(response.answer)
-
-    print("\n" + "-" * 50)
-
-    print(
-        f"Topic:       {response.topic}"
-    )
-
-    print(
-        f"Difficulty:  {response.difficulty}"
-    )
-
-    print(
-        f"Confidence:  {response.confidence:.2f}"
-    )
-
-    print("-" * 50)
-
-
-# ============================================================
-# DISPLAY HISTORY
-# ============================================================
-
-def display_history(history):
-    """
-    Display the current conversation history.
-    """
-
-    print("\n")
-    print("=" * 60)
-    print("CONVERSATION HISTORY")
-    print("=" * 60)
-
-    if not history.messages:
-
-        print(
-            "\nNo conversation history."
+    def final_llm_function(messages):
+        return get_ai_response(
+            provider,
+            messages,
         )
 
-        print("=" * 60)
-
-        return
-
-    for message in history.messages:
-
-        # ----------------------------------------------------
-        # User
-        # ----------------------------------------------------
-
-        if isinstance(
-            message,
-            HumanMessage
-        ):
-
-            print(
-                f"\nYou: {message.content}"
-            )
-
-        # ----------------------------------------------------
-        # AI
-        # ----------------------------------------------------
-
-        elif isinstance(
-            message,
-            AIMessage
-        ):
-
-            print(
-                f"\nAI: {message.content}"
-            )
-
-    print("\n" + "=" * 60)
+    return agent.analyse(
+        question,
+        planning_llm_function,
+        final_llm_function,
+    )
 
 
-# ============================================================
-# MAIN CHATBOT
-# ============================================================
+def is_data_analysis_question(
+    question: str,
+) -> bool:
+    analytical_keywords = [
+        "dataset",
+        "data",
+        "rows",
+        "columns",
+        "revenue",
+        "average",
+        "mean",
+        "median",
+        "maximum",
+        "minimum",
+        "highest",
+        "lowest",
+        "top",
+        "region",
+        "product",
+        "monthly",
+        "month",
+        "missing",
+        "percentage",
+        "statistics",
+        "group",
+        "sort",
+        "filter",
+    ]
 
-def main():
+    question_lower = question.lower()
 
-    # ========================================================
-    # SELECT LLM PROVIDER
-    # ========================================================
+    return any(
+        keyword in question_lower
+        for keyword in analytical_keywords
+    )
 
-    selected_provider = select_llm_provider()
 
-    if selected_provider is None:
+def main() -> None:
+    print("=" * 60)
+    print("AI Data Analyst Chatbot")
+    print("=" * 60)
 
-        return 
-    
-    # ========================================================
-    # SELECT SESSION
-    # ========================================================
+    provider = select_llm_provider()
 
     session_id = select_session()
-
-    if session_id is None:
-
-        return
-
-    # ========================================================
-    # LOAD SQLITE HISTORY
-    # ========================================================
 
     history = SQLChatMessageHistory(
         session_id=session_id,
-        connection=engine
+        connection=DATABASE_URL,
     )
 
-    # ========================================================
-    # DISPLAY SESSION INFORMATION
-    # ========================================================
-
-    print("\n")
-    print("=" * 60)
-
-    print(
-        f"Chatbot session: "
-        f"{session_id}"
-    )
-
-    print("=" * 60)
-
-    if history.messages:
-
-        print(
-            f"\n[INFO] Loaded "
-            f"{len(history.messages)} "
-            f"messages from memory."
+    try:
+        data_analysis_agent = DataAnalysisAgent(
+            DATASET_PATH
         )
 
-    else:
-
         print(
-            "\n[INFO] This is a new conversation."
+            f"Dataset loaded: {DATASET_PATH}"
         )
 
-    # ========================================================
-    # COMMANDS
-    # ========================================================
+    except Exception as exc:
+        data_analysis_agent = None
 
-    print("\nCommands:")
+        print(
+            f"Warning: Data-analysis agent could not "
+            f"load the dataset: {exc}"
+        )
 
-    print(
-        "  /history  - Show conversation history"
-    )
-
-    print(
-        "  /clear    - Clear current conversation"
-    )
-
-    print(
-        "  /exit     - Exit chatbot"
-    )
-
-    print("=" * 60)
-
-    # ========================================================
-    # CHAT LOOP
-    # ========================================================
+    print()
+    print(f"Session: {session_id}")
+    print(f"Provider: {provider}")
+    print()
+    print("Commands:")
+    print("/history - show conversation history")
+    print("/clear   - clear current conversation")
+    print("/exit    - exit the application")
+    print()
 
     while True:
-
         try:
-
-            user_input = input(
-                "\nYou: "
-            ).strip()
+            user_input = input("You: ").strip()
 
         except KeyboardInterrupt:
-
-            print(
-                "\n\nGoodbye!"
-            )
-
+            print()
+            print("Exiting...")
             break
 
         except EOFError:
-
-            print(
-                "\n\nGoodbye!"
-            )
-
+            print()
+            print("Exiting...")
             break
-
-        # ====================================================
-        # EMPTY INPUT
-        # ====================================================
 
         if not user_input:
-
             continue
-
-        # ====================================================
-        # EXIT
-        # ====================================================
 
         if user_input.lower() == "/exit":
-
-            print(
-                "\nGoodbye!"
-            )
-
+            print("Goodbye.")
             break
 
-        # ====================================================
-        # HISTORY
-        # ====================================================
-
         if user_input.lower() == "/history":
-
-            display_history(
-                history
-            )
-
+            display_history(history)
             continue
-
-        # ====================================================
-        # CLEAR
-        # ====================================================
 
         if user_input.lower() == "/clear":
-
             history.clear()
-
-            print(
-                "\n[OK] Conversation history cleared."
-            )
-
+            print("Conversation history cleared.")
             continue
 
-        # ====================================================
-        # RETRIEVE DOCUMENT CONTEXT
-        # ====================================================
-        print("\n[INFO] Searching documents...")
-        retrieved_chunks = retrieve_relevant_chunks(user_input)
-        context_text = format_context_for_prompt(retrieved_chunks)
+        if (
+            data_analysis_agent is not None
+            and is_data_analysis_question(user_input)
+        ):
+            try:
+                analysis = get_data_analysis_response(
+                    provider,
+                    data_analysis_agent,
+                    user_input,
+                )
 
-        # ====================================================
-        # BUILD MESSAGE HISTORY
-        # ====================================================
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT)
-        ]
+                response = analysis["response"]
 
-        messages.extend(history.messages)
+                display_response(response)
 
-        # Inject context directly into the current human message
-        augmented_user_input = (
-            f"Context Information:\n{context_text}\n\n"
-            f"User Question:\n{user_input}"
-        )
+                history.add_user_message(
+                    user_input
+                )
 
-        messages.append(
-            HumanMessage(content=augmented_user_input)
-        )
+                history.add_ai_message(
+                    response["answer"]
+                )
 
-        
-        # ----------------------------------------------------
-        # Add previous conversation
-        # ----------------------------------------------------
+                continue
 
-        messages.extend(
-            history.messages
-        )
+            except Exception as exc:
+                print()
+                print(
+                    f"Data analysis error: {exc}"
+                )
+                print()
 
-        # ----------------------------------------------------
-        # Add current user message
-        # ----------------------------------------------------
-
-        messages.append(
-            HumanMessage(
-                content=user_input
-            )
-        )
-
-        # ====================================================
-        # CALL AI
-        # ====================================================
-
-        print(
-            "\n[INFO] Thinking..."
-        )
+                continue
 
         try:
-
-            ai_response = get_ai_response(
-                selected_provider,
-                messages
+            retrieved_chunks = retrieve_relevant_chunks(
+                user_input
             )
 
-        # ----------------------------------------------------
-        # LLM_Provider API errors
-        # ----------------------------------------------------
+            context = format_context_for_prompt(
+                retrieved_chunks
+            )
 
-        except Exception as e:
-
+        except Exception as exc:
+            print()
             print(
-                "\n[ERROR] Error communicating "
-                f"with {selected_provider.capitalize()}:"
+                f"RAG retrieval warning: {exc}"
             )
+            print()
 
-            print(e)
+            context = ""
 
-            continue
+        history_messages = history.messages
 
-        # ====================================================
-        # DISPLAY RESPONSE
-        # ====================================================
+        augmented_question = f"""
+Use the following retrieved document context when relevant.
 
-        display_response(
-            ai_response
-        )
+Retrieved context:
+{context}
 
-        # ====================================================
-        # SAVE USER MESSAGE
-        # ====================================================
+User question:
+{user_input}
+""".strip()
 
-        history.add_message(
+        messages = [
+            SystemMessage(
+                content=SYSTEM_PROMPT
+            ),
+            *history_messages,
             HumanMessage(
-                content=user_input
+                content=augmented_question
+            ),
+        ]
+
+        try:
+            response = get_ai_response(
+                provider,
+                messages,
             )
-        )
 
-        # ====================================================
-        # SAVE AI MESSAGE
-        # ====================================================
+            display_response(response)
 
-        history.add_message(
-            AIMessage(
-                content=ai_response.answer
+            history.add_user_message(
+                user_input
             )
-        )
 
+            history.add_ai_message(
+                response["answer"]
+            )
 
-# ============================================================
-# PROGRAM ENTRY POINT
-# ============================================================
+        except Exception as exc:
+            print()
+            print(
+                f"LLM error: {exc}"
+            )
+            print()
+
 
 if __name__ == "__main__":
-
     main()

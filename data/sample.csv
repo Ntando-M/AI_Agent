@@ -1,5 +1,9 @@
-Date,Product,Revenue
-2026-01-01,Laptop,1200.0
-2026-01-02,Mouse,25.0
-2026-01-03,Keyboard,45.0
-invalid_date,Laptop,
+Date,Product,Region,Units,Revenue,Customer_Satisfaction
+2026-01-05,Laptop,Gauteng,5,75000,4.5
+2026-01-12,Monitor,Western Cape,8,24000,4.0
+2026-02-03,Laptop,Gauteng,3,45000,4.2
+2026-02-15,Keyboard,KwaZulu-Natal,12,12000,3.8
+2026-03-01,Monitor,Gauteng,6,18000,4.1
+2026-03-18,Laptop,Western Cape,4,60000,
+2026-04-02,Keyboard,Gauteng,10,10000,4.3
+2026-04-21,Laptop,KwaZulu-Natal,2,30000,3.9

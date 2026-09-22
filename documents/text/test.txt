@@ -1,0 +1,5 @@
+Artificial Intelligence is a field of computer science concerned with creating systems that can perform tasks that normally require human intelligence.
+
+Machine learning is a subset of artificial intelligence that allows computers to learn patterns from data.
+
+Retrieval-Augmented Generation combines information retrieval with generative AI. A RAG system retrieves relevant information from a knowledge base and supplies that information to a language model when generating an answer.

@@ -13,97 +13,51 @@ AggregationOperation = Literal[
 
 
 class InspectDatasetInput(BaseModel):
-    """
-    Input model for inspect_dataset.
-    """
-
     pass
 
 
 class FilterDatasetInput(BaseModel):
-    """
-    Input model for filter_dataset.
-    """
-
-    column: str = Field(
-        min_length=1,
-        description="Column to filter.",
-    )
-
-    value: Any = Field(
-        description="Exact value to match.",
-    )
+    column: str = Field(min_length=1)
+    value: Any
 
 
 class GetUniqueValuesInput(BaseModel):
-    """
-    Input model for get_unique_values.
-    """
-
-    column: str = Field(
-        min_length=1,
-        description="Column for which unique values should be returned.",
-    )
+    column: str = Field(min_length=1)
 
 
 class AggregateDatasetInput(BaseModel):
-    """
-    Input model for aggregate_dataset.
-    """
-
-    column: str = Field(
-        min_length=1,
-        description="Numeric column to aggregate.",
-    )
-
-    operation: AggregationOperation = Field(
-        description="Aggregation operation to perform.",
-    )
+    column: str = Field(min_length=1)
+    operation: AggregationOperation
 
 
 class CalculateStatisticsInput(BaseModel):
-    """
-    Input model for calculate_statistics.
-    """
-
-    column: str = Field(
-        min_length=1,
-        description="Numeric column for which statistics should be calculated.",
-    )
+    column: str = Field(min_length=1)
 
 
 class GroupByColumnInput(BaseModel):
-    """
-    Input model for group_by_column.
-    """
-
-    group_column: str = Field(
-        min_length=1,
-        description="Column used to create groups.",
-    )
-
-    aggregation_column: str = Field(
-        min_length=1,
-        description="Numeric column to aggregate.",
-    )
-
-    operation: AggregationOperation = Field(
-        default="sum",
-        description="Aggregation operation to perform.",
-    )
+    group_column: str = Field(min_length=1)
+    aggregation_column: str = Field(min_length=1)
+    operation: AggregationOperation = "sum"
 
 
 class SortDatasetInput(BaseModel):
-    """
-    Input model for sort_dataset.
-    """
+    column: str = Field(min_length=1)
+    ascending: bool = True
 
-    column: str = Field(
-        min_length=1,
-        description="Column used for sorting.",
-    )
 
-    ascending: bool = Field(
-        default=True,
-        description="Whether to sort in ascending order.",
-    )
+class MonthlyRevenueInput(BaseModel):
+    date_column: str = Field(min_length=1)
+    revenue_column: str = Field(min_length=1)
+
+
+class MissingPercentageInput(BaseModel):
+    pass
+
+
+class AnalysisStep(BaseModel):
+    tool: str = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalysisPlan(BaseModel):
+    steps: list[AnalysisStep] = Field(min_length=1)
