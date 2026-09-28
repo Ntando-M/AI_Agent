@@ -1,0 +1,33 @@
+AI DATA ANALYST - V7 SALES REPORT
+========================================
+
+Rows: 8
+Columns: 6
+
+REVENUE STATISTICS
+----------------------------------------
+count: 8.0
+mean: 34250.0
+median: 27000.0
+min: 10000.0
+max: 75000.0
+standard_deviation: 23632.60459619295
+
+REVENUE BY PRODUCT
+----------------------------------------
+Laptop: 210000
+Monitor: 42000
+Keyboard: 22000
+
+REVENUE BY REGION
+----------------------------------------
+Gauteng: 148000
+Western Cape: 84000
+KwaZulu-Natal: 42000
+
+GENERATED CHARTS
+----------------------------------------
+revenue_by_product: charts\revenue_by_product.png
+revenue_by_region: charts\revenue_by_region.png
+monthly_revenue: charts\monthly_revenue.png
+revenue_trend: charts\revenue_trend.png

@@ -27,7 +27,6 @@ from data_analysis.tool_models import (
     SortDatasetInput,
 )
 
-
 from data_analysis.sql_tools import (
     describe_database_table,
     execute_read_only_query,
@@ -41,6 +40,8 @@ from data_analysis.sql_models import (
     ListTablesInput,
     ReadOnlySQLInput,
 )
+
+
 
 def run_inspect_dataset(
     df: pd.DataFrame,
@@ -130,3 +131,37 @@ def run_calculate_missing_percentage(
     inputs: MissingPercentageInput,
 ) -> float:
     return calculate_missing_percentage(df)
+
+def run_inspect_database(
+    engine,
+    inputs: InspectDatabaseInput,
+) -> dict[str, Any]:
+    return inspect_database(engine)
+
+
+def run_list_tables(
+    engine,
+    inputs: ListTablesInput,
+) -> list[str]:
+    return list_database_tables(engine)
+
+
+def run_describe_table(
+    engine,
+    inputs: DescribeTableInput,
+) -> list[dict[str, Any]]:
+    return describe_database_table(
+        engine,
+        inputs.table_name,
+    )
+
+
+def run_read_only_sql(
+    engine,
+    inputs: ReadOnlySQLInput,
+) -> list[dict[str, Any]]:
+    return execute_read_only_query(
+        engine,
+        inputs.query,
+        max_rows=inputs.max_rows,
+    )

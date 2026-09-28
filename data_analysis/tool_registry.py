@@ -22,6 +22,19 @@ from data_analysis.tools import (
     run_sort_dataset,
 )
 
+from data_analysis.sql_models import (
+    DescribeTableInput,
+    InspectDatabaseInput,
+    ListTablesInput,
+    ReadOnlySQLInput,
+)
+
+from data_analysis.tools import (
+    run_describe_table,
+    run_inspect_database,
+    run_list_tables,
+    run_read_only_sql,
+)
 
 TOOL_REGISTRY = {
     "inspect_dataset": {
@@ -90,6 +103,42 @@ TOOL_REGISTRY = {
         "description": (
             "Calculate the percentage of rows containing "
             "at least one missing value."
+        ),
+    },
+    "inspect_database": {
+    "function": run_inspect_database,
+    "input_model": InspectDatabaseInput,
+    "description": (
+        "Inspect the database and return the available "
+        "tables."
+        ),
+    },
+
+    "list_tables": {
+        "function": run_list_tables,
+        "input_model": ListTablesInput,
+        "description": (
+            "List all tables available in the analytical database."
+        ),
+    },
+
+    "describe_table": {
+        "function": run_describe_table,
+        "input_model": DescribeTableInput,
+        "description": (
+            "Inspect the columns, data types, nullability, "
+            "and primary-key information of a database table."
+        ),
+    },
+
+    "execute_read_only_sql": {
+        "function": run_read_only_sql,
+        "input_model": ReadOnlySQLInput,
+        "description": (
+            "Execute a controlled read-only SELECT or WITH SQL "
+            "query against the analytical database. "
+            "INSERT, UPDATE, DELETE, DROP, ALTER, CREATE and "
+            "other modifying operations are prohibited."
         ),
     },
 }
