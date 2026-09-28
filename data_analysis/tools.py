@@ -28,6 +28,20 @@ from data_analysis.tool_models import (
 )
 
 
+from data_analysis.sql_tools import (
+    describe_database_table,
+    execute_read_only_query,
+    inspect_database,
+    list_database_tables,
+)
+
+from data_analysis.sql_models import (
+    DescribeTableInput,
+    InspectDatabaseInput,
+    ListTablesInput,
+    ReadOnlySQLInput,
+)
+
 def run_inspect_dataset(
     df: pd.DataFrame,
     inputs: InspectDatasetInput,

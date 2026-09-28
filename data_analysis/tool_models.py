@@ -2,6 +2,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from data_analysis.sql_models import (
+    DescribeTableInput,
+    InspectDatabaseInput,
+    ListTablesInput,
+    ReadOnlySQLInput,
+)
 
 AggregationOperation = Literal[
     "sum",
