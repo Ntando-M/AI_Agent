@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-DEFAULT_OUTPUT_DIRECTORY = Path("charts")
+DEFAULT_OUTPUT_DIRECTORY = Path("outputs") / "charts"
 
 
 def _validate_columns(
@@ -32,6 +32,18 @@ def _validate_columns(
         raise ValueError(
             f"Missing required columns: "
             f"{missing_columns}"
+        )
+
+
+def _require_numeric_column(
+    dataframe: pd.DataFrame,
+    column: str,
+) -> None:
+    if not pd.api.types.is_numeric_dtype(
+        dataframe[column]
+    ):
+        raise TypeError(
+            f"Column '{column}' must be numeric"
         )
 
 
@@ -329,6 +341,178 @@ def plot_revenue_trend(
     )
 
     figure.autofmt_xdate()
+    figure.tight_layout()
+
+    return _save_figure(
+        figure,
+        output_path,
+    )
+
+
+def plot_revenue_distribution(
+    dataframe: pd.DataFrame,
+    revenue_column: str = "Revenue",
+    bins: int = 10,
+    output_path: str | Path = (
+        DEFAULT_OUTPUT_DIRECTORY
+        / "revenue_distribution.png"
+    ),
+) -> str:
+    """
+    Generate a histogram showing the distribution
+    of a numeric column.
+    """
+
+    _validate_columns(
+        dataframe,
+        [
+            revenue_column,
+        ],
+    )
+
+    _require_numeric_column(
+        dataframe,
+        revenue_column,
+    )
+
+    figure, axis = plt.subplots()
+
+    dataframe[revenue_column].plot(
+        kind="hist",
+        bins=bins,
+        ax=axis,
+        edgecolor="black",
+    )
+
+    axis.set_title(
+        f"{revenue_column} Distribution"
+    )
+    axis.set_xlabel(revenue_column)
+    axis.set_ylabel("Frequency")
+
+    figure.tight_layout()
+
+    return _save_figure(
+        figure,
+        output_path,
+    )
+
+
+def plot_revenue_relationship(
+    dataframe: pd.DataFrame,
+    x_column: str = "Revenue",
+    y_column: str = "Quantity",
+    output_path: str | Path = (
+        DEFAULT_OUTPUT_DIRECTORY
+        / "revenue_relationship.png"
+    ),
+) -> str:
+    """
+    Generate a scatter plot showing the relationship
+    between two numeric columns.
+    """
+
+    _validate_columns(
+        dataframe,
+        [
+            x_column,
+            y_column,
+        ],
+    )
+
+    _require_numeric_column(
+        dataframe,
+        x_column,
+    )
+
+    _require_numeric_column(
+        dataframe,
+        y_column,
+    )
+
+    figure, axis = plt.subplots()
+
+    axis.scatter(
+        dataframe[x_column],
+        dataframe[y_column],
+        alpha=0.7,
+        edgecolor="black",
+    )
+
+    axis.set_title(
+        f"{y_column} vs {x_column}"
+    )
+    axis.set_xlabel(x_column)
+    axis.set_ylabel(y_column)
+
+    figure.tight_layout()
+
+    return _save_figure(
+        figure,
+        output_path,
+    )
+
+
+def plot_revenue_box_plot(
+    dataframe: pd.DataFrame,
+    category_column: str = "Product",
+    value_column: str = "Revenue",
+    output_path: str | Path = (
+        DEFAULT_OUTPUT_DIRECTORY
+        / "revenue_box_plot.png"
+    ),
+) -> str:
+    """
+    Generate a box plot showing the distribution
+    and outliers of a numeric column per category.
+    """
+
+    _validate_columns(
+        dataframe,
+        [
+            category_column,
+            value_column,
+        ],
+    )
+
+    _require_numeric_column(
+        dataframe,
+        value_column,
+    )
+
+    categories = [
+        group[value_column].dropna().to_numpy()
+        for _, group in dataframe.groupby(
+            category_column
+        )
+    ]
+
+    labels = [
+        str(category)
+        for category, _ in dataframe.groupby(
+            category_column
+        )
+    ]
+
+    if not categories:
+        raise ValueError(
+            f"No data available to plot for column "
+            f"'{category_column}'."
+        )
+
+    figure, axis = plt.subplots()
+
+    axis.boxplot(
+        categories,
+        tick_labels=labels,
+    )
+
+    axis.set_title(
+        f"{value_column} by {category_column}"
+    )
+    axis.set_xlabel(category_column)
+    axis.set_ylabel(value_column)
+
     figure.tight_layout()
 
     return _save_figure(

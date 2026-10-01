@@ -113,7 +113,7 @@ def generate_sales_report(
     report_directory: str | Path = (
         DEFAULT_REPORT_DIRECTORY
     ),
-    chart_directory: str | Path = "charts",
+    chart_directory: str | Path = "outputs/charts",
 ) -> dict[str, Any]:
     """
     Generate a complete deterministic V7
