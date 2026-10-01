@@ -1,5 +1,5 @@
 from langchain_ollama import ChatOllama
-from models.response_models import AIResponse
+from models.response_models import AnalysisResponse
 
 
 OLLAMA_MODEL = "llama3.2:3b"
@@ -16,7 +16,7 @@ def get_ollama_response(messages):
     llm = get_ollama_llm()
 
     structured_llm = llm.with_structured_output(
-        AIResponse
+        AnalysisResponse
     )
 
     response = structured_llm.invoke(messages)

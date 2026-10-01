@@ -22,7 +22,7 @@ from llm.ollama_provider import (
 )
 
 from llm.router import get_llm_response
-from models.response_models import AIResponse
+from models.response_models import AnalysisResponse
 from rag.retriever import (
     retrieve_relevant_chunks,
     format_context_for_prompt,
@@ -35,7 +35,7 @@ ANALYTICS_DATABASE_PATH = "data/sales.db"
 
 
 SYSTEM_PROMPT = """
-You are a helpful and professional AI assistant.
+You are a helpful and professional AI Data Analyst.
 
 Answer the user's question accurately and clearly.
 
@@ -45,16 +45,25 @@ context or conversation.
 
 Your response must contain:
 - answer
-- topic
-- difficulty
+- analysis_type
+- datasets_used
+- calculations_performed
+- key_findings
+- sources
 - confidence
 
-Difficulty must be one of:
-- beginner
-- intermediate
-- advanced
+Analysis type must be one of:
+- general
+- document
+- dataset
+- database
+- visualisation
 
-Confidence must be a value between 0 and 1.
+Datasets used, calculations performed, key findings and sources are
+lists. Use an empty list when nothing applies.
+
+Confidence must be a value between 0 and 1. Lower it when the
+available evidence is incomplete.
 """.strip()
 
 
@@ -191,20 +200,56 @@ def get_ai_response(
         messages,
     )
 
-    validated_response = AIResponse.model_validate(
+    validated_response = AnalysisResponse.model_validate(
         response
     )
 
     return validated_response.model_dump()
 
 
-def display_response(response: dict) -> None:
+def display_response(
+    response: dict,
+    visualisations: list[str] | None = None,
+) -> None:
     print()
     print("AI:")
     print(response["answer"])
     print()
-    print(f"Topic: {response['topic']}")
-    print(f"Difficulty: {response['difficulty']}")
+
+    if response.get("key_findings"):
+        print("Key findings:")
+        for finding in response["key_findings"]:
+            print(f"- {finding}")
+        print()
+
+    if response.get("calculations_performed"):
+        print("Calculations performed:")
+        for calculation in response[
+            "calculations_performed"
+        ]:
+            print(f"- {calculation}")
+        print()
+
+    if response.get("datasets_used"):
+        print(
+            "Datasets used: "
+            f"{', '.join(response['datasets_used'])}"
+        )
+
+    if response.get("sources"):
+        print(
+            "Sources: "
+            f"{', '.join(response['sources'])}"
+        )
+
+    if visualisations:
+        print()
+        print("Visualisations:")
+        for path in visualisations:
+            print(f"- {path}")
+
+    print()
+    print(f"Analysis type: {response['analysis_type']}")
     print(f"Confidence: {response['confidence']}")
     print()
 
@@ -401,7 +446,14 @@ def main() -> None:
 
                 response = analysis["response"]
 
-                display_response(response)
+                visualisations = analysis.get(
+                    "visualisations"
+                )
+
+                display_response(
+                    response,
+                    visualisations,
+                )
 
                 history.add_user_message(
                     user_input
@@ -439,8 +491,17 @@ def main() -> None:
             print()
 
             context = ""
+            retrieved_chunks = []
 
         history_messages = history.messages
+
+        source_labels = sorted(
+            {
+                chunk["filename"]
+                for chunk in retrieved_chunks
+                if chunk.get("filename")
+            }
+        )
 
         augmented_question = f"""
 Use the following retrieved document context when relevant.
@@ -467,6 +528,9 @@ User question:
                 provider,
                 messages,
             )
+
+            if source_labels and not response["sources"]:
+                response["sources"] = source_labels
 
             display_response(response)
 

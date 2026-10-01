@@ -32,7 +32,7 @@ groq_client = Groq()
 # JSON SCHEMA
 # ============================================================
 
-AI_RESPONSE_SCHEMA = {
+ANALYSIS_RESPONSE_SCHEMA = {
     "type": "object",
 
     "properties": {
@@ -40,26 +40,58 @@ AI_RESPONSE_SCHEMA = {
         "answer": {
             "type": "string",
             "description": (
-                "The complete answer to the user's question"
+                "The complete answer to the user's question, "
+                "written in clear natural language"
             )
         },
 
-        "topic": {
-            "type": "string",
-            "description": (
-                "The main topic of the user's question"
-            )
-        },
-
-        "difficulty": {
+        "analysis_type": {
             "type": "string",
             "enum": [
-                "beginner",
-                "intermediate",
-                "advanced"
+                "general",
+                "document",
+                "dataset",
+                "database",
+                "visualisation"
             ],
             "description": (
-                "The estimated difficulty of the user's question"
+                "The kind of analysis performed"
+            )
+        },
+
+        "datasets_used": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "The names of the datasets or database tables "
+                "used to produce the answer"
+            )
+        },
+
+        "calculations_performed": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "A description of each deterministic calculation "
+                "or query that was actually executed"
+            )
+        },
+
+        "key_findings": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "The most important findings, each stated as a "
+                "concrete result supported by the evidence"
+            )
+        },
+
+        "sources": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "The documents, filenames or database tables that "
+                "provided the evidence"
             )
         },
 
@@ -68,16 +100,19 @@ AI_RESPONSE_SCHEMA = {
             "minimum": 0.0,
             "maximum": 1.0,
             "description": (
-                "The model's confidence in the answer "
-                "from 0.0 to 1.0"
+                "The model's confidence in the answer, from 0.0 "
+                "to 1.0. Reduce this when the evidence is incomplete."
             )
         }
     },
 
     "required": [
         "answer",
-        "topic",
-        "difficulty",
+        "analysis_type",
+        "datasets_used",
+        "calculations_performed",
+        "key_findings",
+        "sources",
         "confidence"
     ],
 
@@ -158,7 +193,8 @@ def get_groq_response(messages):
     Send the conversation to Groq.
 
     Returns the raw JSON response as a Python dictionary.
-    Validation is handled by main.py using the AIResponse
+    Validation is handled by main.py using the
+    AnalysisResponse Pydantic model.
     Pydantic model.
     """
 
@@ -179,11 +215,11 @@ def get_groq_response(messages):
 
             "json_schema": {
 
-                "name": "ai_response",
+                "name": "analysis_response",
 
                 "strict": True,
 
-                "schema": AI_RESPONSE_SCHEMA
+                "schema": ANALYSIS_RESPONSE_SCHEMA
             }
         }
     )

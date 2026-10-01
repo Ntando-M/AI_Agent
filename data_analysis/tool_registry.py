@@ -19,14 +19,19 @@ the correct executor.
 
 from data_analysis.tool_models import (
     AggregateDatasetInput,
+    BoxPlotInput,
     CalculateStatisticsInput,
+    ChartByCategoryInput,
+    DistributionChartInput,
     FilterDatasetInput,
     GetUniqueValuesInput,
     GroupByColumnInput,
     InspectDatasetInput,
     MissingPercentageInput,
     MonthlyRevenueInput,
+    RelationshipChartInput,
     SortDatasetInput,
+    TimeSeriesChartInput,
 )
 
 from data_analysis.tools import (
@@ -34,6 +39,12 @@ from data_analysis.tools import (
     run_calculate_missing_percentage,
     run_calculate_monthly_revenue,
     run_calculate_statistics,
+    run_chart_box_plot,
+    run_chart_distribution,
+    run_chart_monthly_revenue,
+    run_chart_revenue_by_category,
+    run_chart_revenue_over_time,
+    run_chart_relationship,
     run_filter_dataset,
     run_get_unique_values,
     run_group_by_column,
@@ -122,6 +133,65 @@ DATAFRAME_TOOL_REGISTRY = {
         "description": (
             "Calculate the percentage of rows containing "
             "at least one missing value."
+        ),
+    },
+    "chart_revenue_by_category": {
+        "function": run_chart_revenue_by_category,
+        "input_model": ChartByCategoryInput,
+        "description": (
+            "Generate a bar chart comparing a numeric measure "
+            "across the categories of a column, for example "
+            "total revenue by product or by region. "
+            "Use this when the user asks to compare, rank or "
+            "show totals per category."
+        ),
+    },
+    "chart_revenue_over_time": {
+        "function": run_chart_revenue_over_time,
+        "input_model": TimeSeriesChartInput,
+        "description": (
+            "Generate a line chart showing a numeric measure "
+            "over time in chronological order. Use this when "
+            "the user asks for a trend or how a value changed "
+            "over a period."
+        ),
+    },
+    "chart_monthly_revenue": {
+        "function": run_chart_monthly_revenue,
+        "input_model": TimeSeriesChartInput,
+        "description": (
+            "Generate a line chart of a numeric measure "
+            "totalled per calendar month. Use this when the "
+            "user asks for a monthly breakdown or trend."
+        ),
+    },
+    "chart_distribution": {
+        "function": run_chart_distribution,
+        "input_model": DistributionChartInput,
+        "description": (
+            "Generate a histogram showing the distribution of "
+            "a numeric column. Use this when the user asks about "
+            "spread, distribution or how values are dispersed."
+        ),
+    },
+    "chart_relationship": {
+        "function": run_chart_relationship,
+        "input_model": RelationshipChartInput,
+        "description": (
+            "Generate a scatter plot showing the relationship "
+            "between two numeric columns. Use this when the user "
+            "asks about correlation or how one numeric measure "
+            "varies against another."
+        ),
+    },
+    "chart_box_plot": {
+        "function": run_chart_box_plot,
+        "input_model": BoxPlotInput,
+        "description": (
+            "Generate a box plot showing the distribution of a "
+            "numeric measure per category, which exposes "
+            "outliers. Use this when the user asks about "
+            "variability or outliers within groups."
         ),
     },
 }

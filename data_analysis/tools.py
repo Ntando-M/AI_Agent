@@ -17,16 +17,30 @@ from data_analysis.analyzer import (
 )
 from data_analysis.tool_models import (
     AggregateDatasetInput,
+    BoxPlotInput,
     CalculateStatisticsInput,
+    ChartByCategoryInput,
+    DistributionChartInput,
     FilterDatasetInput,
     GetUniqueValuesInput,
     GroupByColumnInput,
     InspectDatasetInput,
     MissingPercentageInput,
     MonthlyRevenueInput,
+    RelationshipChartInput,
     SortDatasetInput,
+    TimeSeriesChartInput,
 )
 
+from data_analysis.charts import (
+    plot_monthly_revenue,
+    plot_revenue_box_plot,
+    plot_revenue_by_product,
+    plot_revenue_by_region,
+    plot_revenue_distribution,
+    plot_revenue_relationship,
+    plot_revenue_trend,
+)
 from data_analysis.sql_tools import (
     describe_database_table,
     execute_read_only_query,
@@ -165,3 +179,127 @@ def run_read_only_sql(
         inputs.query,
         max_rows=inputs.max_rows,
     )
+
+
+def run_chart_revenue_by_category(
+    df: pd.DataFrame,
+    inputs: ChartByCategoryInput,
+) -> dict[str, str]:
+    """
+    Render a bar chart comparing a numeric measure
+    across the categories of a column.
+    """
+
+    path = plot_revenue_by_product(
+        df,
+        product_column=inputs.category_column,
+        revenue_column=inputs.value_column,
+    )
+
+    return {
+        "chart_type": "bar",
+        "path": path,
+    }
+
+
+def run_chart_revenue_over_time(
+    df: pd.DataFrame,
+    inputs: TimeSeriesChartInput,
+) -> dict[str, str]:
+    """
+    Render a line chart of a numeric measure over time.
+    """
+
+    path = plot_revenue_trend(
+        df,
+        date_column=inputs.date_column,
+        revenue_column=inputs.value_column,
+    )
+
+    return {
+        "chart_type": "line",
+        "path": path,
+    }
+
+
+def run_chart_monthly_revenue(
+    df: pd.DataFrame,
+    inputs: TimeSeriesChartInput,
+) -> dict[str, str]:
+    """
+    Render a line chart of revenue totals per calendar month.
+    """
+
+    path = plot_monthly_revenue(
+        df,
+        date_column=inputs.date_column,
+        revenue_column=inputs.value_column,
+    )
+
+    return {
+        "chart_type": "line",
+        "path": path,
+    }
+
+
+def run_chart_distribution(
+    df: pd.DataFrame,
+    inputs: DistributionChartInput,
+) -> dict[str, str]:
+    """
+    Render a histogram of the distribution
+    of a numeric column.
+    """
+
+    path = plot_revenue_distribution(
+        df,
+        revenue_column=inputs.value_column,
+        bins=inputs.bins,
+    )
+
+    return {
+        "chart_type": "histogram",
+        "path": path,
+    }
+
+
+def run_chart_relationship(
+    df: pd.DataFrame,
+    inputs: RelationshipChartInput,
+) -> dict[str, str]:
+    """
+    Render a scatter plot of the relationship between
+    two numeric columns.
+    """
+
+    path = plot_revenue_relationship(
+        df,
+        x_column=inputs.x_column,
+        y_column=inputs.y_column,
+    )
+
+    return {
+        "chart_type": "scatter",
+        "path": path,
+    }
+
+
+def run_chart_box_plot(
+    df: pd.DataFrame,
+    inputs: BoxPlotInput,
+) -> dict[str, str]:
+    """
+    Render a box plot showing the distribution of a
+    numeric measure per category.
+    """
+
+    path = plot_revenue_box_plot(
+        df,
+        category_column=inputs.category_column,
+        value_column=inputs.value_column,
+    )
+
+    return {
+        "chart_type": "box",
+        "path": path,
+    }

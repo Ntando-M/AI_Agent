@@ -234,6 +234,12 @@ dataset-transforming tool becomes the current dataset for the
 next dataset-transforming tool. Database tools operate on the
 analytical database and are independent of the current dataset.
 
+Chart tools return the path of a generated image. Include a
+chart tool only when the user asks to see, plot, chart,
+visualise or graph something, or explicitly asks for a
+trend, comparison or distribution picture. Never use a chart
+tool just to answer a numeric question.
+
 Return ONLY valid JSON matching this structure:
 
 {{
@@ -261,14 +267,18 @@ User question:
 You are the final response component of an AI Data Analyst.
 
 Answer the user's question using ONLY the deterministic
-Python/Pandas tool results below.
+tool results below.
 
 Do not invent calculations.
 
 Do not claim that a calculation was performed if it is not
 present in the results.
 
-Explain the result clearly and concisely.
+Do not claim a chart was generated unless the results contain
+a chart entry with a path. Reference generated charts by their
+path exactly as given.
+
+State any limitation where the evidence is insufficient.
 
 User question:
 
@@ -278,8 +288,35 @@ Tool results:
 
 {json.dumps(results, indent=2, default=str)}
 
-Provide the final answer in normal natural language.
+Respond with the required structured fields.
 """.strip()
+
+    def collect_visualisations(
+        self,
+        results: list[dict[str, Any]],
+    ) -> list[str]:
+        """
+        Return the chart paths produced by the executed plan.
+
+        Collected from the tool results rather than from the
+        LLM, so the reported visualisations are always the
+        charts that were actually written.
+        """
+
+        paths = []
+
+        for step_result in results:
+            payload = step_result.get("result")
+
+            if not isinstance(payload, dict):
+                continue
+
+            if "path" not in payload:
+                continue
+
+            paths.append(payload["path"])
+
+        return paths
 
     def plan_with_llm(
         self,
@@ -350,5 +387,8 @@ Provide the final answer in normal natural language.
         return {
             "plan": plan.model_dump(),
             "results": results,
+            "visualisations": (
+                self.collect_visualisations(results)
+            ),
             "response": final_response,
         }
