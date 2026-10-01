@@ -10,6 +10,12 @@ env/
 # Database files
 
 chat_history.db
+data/sales.db
+
+# Generated analysis output
+
+charts/
+outputs/
 
 chroma_db/*
 !chroma_db/.gitkeep

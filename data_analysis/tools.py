@@ -42,7 +42,6 @@ from data_analysis.sql_models import (
 )
 
 
-
 def run_inspect_dataset(
     df: pd.DataFrame,
     inputs: InspectDatasetInput,
@@ -131,6 +130,7 @@ def run_calculate_missing_percentage(
     inputs: MissingPercentageInput,
 ) -> float:
     return calculate_missing_percentage(df)
+
 
 def run_inspect_database(
     engine,

@@ -5,8 +5,15 @@ langchain-openai
 langchain-anthropic
 langchain_groq
 langchain_core
+langchain-chroma
+langchain-ollama
 python-dotenv
 pydantic
 groq
 sqlalchemy
+pandas
+openpyxl
 matplotlib
+pypdf
+chromadb
+pytest
