@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from sqlalchemy import create_engine
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import (
@@ -29,6 +31,7 @@ from rag.retriever import (
 DATABASE_URL = "sqlite:///chat_history.db"
 DEFAULT_SESSION = "default_session"
 DATASET_PATH = "data/sample_sales.xlsx"
+ANALYTICS_DATABASE_PATH = "data/sales.db"
 
 
 SYSTEM_PROMPT = """
@@ -309,14 +312,33 @@ def main() -> None:
         connection=DATABASE_URL,
     )
 
+    analytics_database_path = None
+
+    if Path(ANALYTICS_DATABASE_PATH).exists():
+        analytics_database_path = ANALYTICS_DATABASE_PATH
+
     try:
         data_analysis_agent = DataAnalysisAgent(
-            DATASET_PATH
+            DATASET_PATH,
+            database_path=analytics_database_path,
         )
 
         print(
             f"Dataset loaded: {DATASET_PATH}"
         )
+
+        if data_analysis_agent.has_database:
+            print(
+                f"Analytical database: "
+                f"{ANALYTICS_DATABASE_PATH}"
+            )
+        else:
+            print(
+                f"Analytical database not found at "
+                f"{ANALYTICS_DATABASE_PATH}. "
+                f"Run scripts/create_sales_database.py to "
+                f"create it. SQL tools are disabled."
+            )
 
     except Exception as exc:
         data_analysis_agent = None

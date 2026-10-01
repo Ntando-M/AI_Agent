@@ -5,14 +5,28 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
+from langchain_core.messages import (
+    HumanMessage,
+    SystemMessage,
+)
 
 from data_analysis import load_dataset
+from data_analysis.sql_agent import SQLAnalysisAgent
 from data_analysis.tool_models import AnalysisPlan
-from data_analysis.tool_registry import get_tool_registry
+from data_analysis.tool_registry import (
+    get_dataframe_tool_registry,
+    get_sql_tool_registry,
+    get_tool_registry,
+    get_tool_data_source,
+)
 
 
 class DataAnalysisAgent:
-    def __init__(self, dataset_path: str | Path):
+    def __init__(
+        self,
+        dataset_path: str | Path,
+        database_path: str | Path | None = None,
+    ):
         self.dataset_path = Path(dataset_path)
 
         if not self.dataset_path.exists():
@@ -22,21 +36,57 @@ class DataAnalysisAgent:
 
         self.dataframe = load_dataset(self.dataset_path)
         self.tool_registry = get_tool_registry()
+        self.dataframe_tool_registry = (
+            get_dataframe_tool_registry()
+        )
+        self.sql_tool_registry = get_sql_tool_registry()
 
-    def get_tool_descriptions(self) -> str:
+        self.sql_agent: SQLAnalysisAgent | None = None
+
+        if database_path is not None:
+            self.sql_agent = SQLAnalysisAgent(
+                database_path
+            )
+
+    @property
+    def has_database(self) -> bool:
+        """
+        Whether SQL tools can be executed by this agent.
+        """
+
+        return self.sql_agent is not None
+
+    def get_available_tool_descriptions(self) -> str:
+        """
+        Describe only the tools this agent can actually run.
+
+        A database tool is omitted when no analytical database
+        is configured, so the planner cannot select a tool that
+        would fail at execution time.
+        """
+
+        registries = [self.dataframe_tool_registry]
+
+        if self.has_database:
+            registries.append(
+                self.sql_tool_registry
+            )
+
         descriptions = []
 
-        for name, definition in self.tool_registry.items():
-            input_model = definition["input_model"]
-            schema = input_model.model_json_schema()
-
-            descriptions.append(
-                {
-                    "name": name,
-                    "description": definition["description"],
-                    "input_schema": schema,
-                }
-            )
+        for registry in registries:
+            for name, definition in registry.items():
+                descriptions.append(
+                    {
+                        "name": name,
+                        "description": definition[
+                            "description"
+                        ],
+                        "input_schema": definition[
+                            "input_model"
+                        ].model_json_schema(),
+                    }
+                )
 
         return json.dumps(
             descriptions,
@@ -50,17 +100,46 @@ class DataAnalysisAgent:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> tuple[pd.DataFrame, Any]:
-        if tool_name not in self.tool_registry:
-            raise ValueError(
-                f"Unknown analysis tool: {tool_name}"
+        """
+        Execute one planned step against the correct data source.
+
+        Dataframe tools receive the current working DataFrame.
+        SQL tools receive the analytical database engine.
+
+        Returns:
+            The new working DataFrame and the tool result.
+        """
+
+        data_source = get_tool_data_source(tool_name)
+
+        if data_source == "database":
+            definition = self.sql_tool_registry[tool_name]
+
+            if not self.has_database:
+                raise ValueError(
+                    f"Tool '{tool_name}' requires an "
+                    f"analytical database, but none is configured."
+                )
+
+            validated_inputs = definition[
+                "input_model"
+            ].model_validate(arguments)
+
+            result = definition["function"](
+                self.sql_agent.engine,
+                validated_inputs,
             )
 
-        definition = self.tool_registry[tool_name]
-        input_model = definition["input_model"]
+            if isinstance(result, list):
+                dataframe = pd.DataFrame(result)
 
-        validated_inputs = input_model.model_validate(
-            arguments
-        )
+            return dataframe, result
+
+        definition = self.dataframe_tool_registry[tool_name]
+
+        validated_inputs = definition[
+            "input_model"
+        ].model_validate(arguments)
 
         result = definition["function"](
             dataframe,
@@ -143,9 +222,17 @@ The dataset columns are:
 
 {list(self.dataframe.columns)}
 
+An analytical database is{' available' if self.has_database else ' NOT available'}.
+Database tools are listed below only when a database is available.
+
 Available tools:
 
-{self.get_tool_descriptions()}
+{self.get_available_tool_descriptions()}
+
+Dataframe tools operate on the current dataset. The output of a
+dataset-transforming tool becomes the current dataset for the
+next dataset-transforming tool. Database tools operate on the
+analytical database and are independent of the current dataset.
 
 Return ONLY valid JSON matching this structure:
 
@@ -159,9 +246,6 @@ Return ONLY valid JSON matching this structure:
 }}
 
 For multi-step questions, use multiple tools in the correct order.
-
-The output of one tool becomes the current dataset for
-the next dataset-transforming tool.
 
 User question:
 
@@ -202,11 +286,6 @@ Provide the final answer in normal natural language.
         question: str,
         planning_llm_function: Callable,
     ) -> AnalysisPlan:
-        from langchain_core.messages import (
-            HumanMessage,
-            SystemMessage,
-        )
-
         planning_prompt = self.build_planning_prompt(
             question
         )
@@ -255,11 +334,6 @@ Provide the final answer in normal natural language.
         final_prompt = self.build_results_prompt(
             question,
             results,
-        )
-
-        from langchain_core.messages import (
-            HumanMessage,
-            SystemMessage,
         )
 
         final_response = final_llm_function(
