@@ -21,6 +21,81 @@ def inspect_dataset(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def _normalise_label(value: Any) -> str:
+    """
+    Reduce a category label to a comparable form.
+
+    Lowercases, trims surrounding whitespace, and strips a
+    trailing plural 's' so that a query for "laptops" can be
+    matched against a stored "Laptop".
+    """
+
+    text = str(value).strip().lower()
+
+    if len(text) > 1 and text.endswith("s"):
+        return text[:-1]
+
+    return text
+
+
+def resolve_filter_value(
+    df: pd.DataFrame,
+    column: str,
+    value: Any,
+) -> Any:
+    """
+    Resolve a requested value against the labels actually
+    present in a column.
+
+    A user asks about "laptops" and the column stores "Laptop".
+    Matching the request literally returns an empty frame, which
+    downstream reads as "no data" rather than "you named it
+    slightly differently". Resolution is attempted in order:
+
+    1. exact match on the stored label
+    2. case-insensitive match
+    3. singular/plural match
+
+    Numeric columns are compared numerically, so a requested "5"
+    matches a stored 5.
+
+    Returns the stored value to filter on, or the original value
+    when nothing matches, so an unresolvable filter still yields
+    an empty frame rather than silently matching the wrong label.
+    """
+
+    if column not in df.columns:
+        raise ValueError(
+            f"Column '{column}' not found"
+        )
+
+    series = df[column]
+
+    if pd.api.types.is_numeric_dtype(series):
+        try:
+            return type(series.dropna().iloc[0])(value)
+        except (ValueError, TypeError, IndexError):
+            return value
+
+    labels = series.dropna().unique().tolist()
+
+    if value in labels:
+        return value
+
+    requested = _normalise_label(value)
+
+    # Case-insensitive, ignoring whitespace and plural form.
+    normalised = {
+        _normalise_label(label): label
+        for label in labels
+    }
+
+    if requested in normalised:
+        return normalised[requested]
+
+    return value
+
+
 def filter_dataset(
     df: pd.DataFrame,
     column: str,
@@ -31,7 +106,13 @@ def filter_dataset(
             f"Column '{column}' not found"
         )
 
-    return df[df[column] == value].copy()
+    resolved = resolve_filter_value(
+        df,
+        column,
+        value,
+    )
+
+    return df[df[column] == resolved].copy()
 
 
 def get_unique_values(
@@ -71,6 +152,12 @@ def aggregate_dataset(
             f"Column '{column}' must be numeric"
         )
 
+    if df.empty:
+        raise ValueError(
+            "Cannot aggregate: the dataset has no rows. "
+            "A filter probably matched nothing."
+        )
+
     operations = {
         "sum": df[column].sum,
         "mean": df[column].mean,
@@ -93,6 +180,12 @@ def calculate_statistics(
     if not pd.api.types.is_numeric_dtype(df[column]):
         raise TypeError(
             f"Column '{column}' must be numeric"
+        )
+
+    if df.empty:
+        raise ValueError(
+            "Cannot calculate statistics: the dataset has no "
+            "rows. A filter probably matched nothing."
         )
 
     series = df[column].dropna()
@@ -138,6 +231,12 @@ def group_by_column(
     ):
         raise TypeError(
             f"Column '{aggregation_column}' must be numeric"
+        )
+
+    if df.empty:
+        raise ValueError(
+            "Cannot group: the dataset has no rows. "
+            "A filter probably matched nothing."
         )
 
     result = (
@@ -191,6 +290,12 @@ def calculate_monthly_revenue(
     ):
         raise TypeError(
             f"Column '{revenue_column}' must be numeric"
+        )
+
+    if df.empty:
+        raise ValueError(
+            "Cannot calculate monthly revenue: the dataset "
+            "has no rows. A filter probably matched nothing."
         )
 
     dates = pd.to_datetime(
