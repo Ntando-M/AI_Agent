@@ -1,16 +1,16 @@
 from pathlib import Path
 
-from sqlalchemy import create_engine
-from langchain_community.chat_message_histories import SQLChatMessageHistory
-
 from config import LLM_PROVIDER
 from llm.groq_provider import get_groq_model
 from llm.ollama_provider import get_ollama_model
+from memory.sqlite_store import (
+    DEFAULT_SESSION,
+    SQLiteConversationStore,
+)
 from orchestrator.llm_gateway import LLMGateway
 from orchestrator.orchestrator import Orchestrator
 
 DATABASE_URL = "sqlite:///chat_history.db"
-DEFAULT_SESSION = "default_session"
 DATASET_PATH = "data/sample_sales.xlsx"
 ANALYTICS_DATABASE_PATH = "data/sales.db"
 
@@ -61,31 +61,6 @@ def select_llm_provider() -> str:
     return provider
 
 
-def get_existing_sessions() -> list[str]:
-    engine = create_engine(DATABASE_URL)
-
-    try:
-        with engine.connect() as connection:
-            result = connection.exec_driver_sql(
-                """
-                SELECT DISTINCT session_id
-                FROM message_store
-                ORDER BY session_id
-                """
-            )
-
-            return [
-                row[0]
-                for row in result.fetchall()
-            ]
-
-    except Exception:
-        return []
-
-    finally:
-        engine.dispose()
-
-
 def create_new_session() -> str:
     print()
     session_id = input(
@@ -98,8 +73,13 @@ def create_new_session() -> str:
     return session_id
 
 
-def select_session() -> str:
-    sessions = get_existing_sessions()
+def select_session(
+    store: SQLiteConversationStore,
+) -> str:
+    sessions = [
+        summary.session_id
+        for summary in store.list_sessions()
+    ]
 
     if not sessions:
         print(
@@ -190,10 +170,13 @@ def display_response(
     print()
 
 
-def display_history(history) -> None:
-    messages = history.messages
+def display_session(
+    store: SQLiteConversationStore,
+    session_id: str,
+) -> None:
+    turns = store.get_turns(session_id)
 
-    if not messages:
+    if not turns:
         print()
         print("No conversation history.")
         print()
@@ -203,17 +186,11 @@ def display_history(history) -> None:
     print("Conversation history:")
     print()
 
-    for message in messages:
-        message_type = message.__class__.__name__
-
-        if message_type == "HumanMessage":
-            print(f"You: {message.content}")
-
-        elif message_type == "AIMessage":
-            print(f"AI: {message.content}")
-
+    for turn in turns:
+        if turn.role == "user":
+            print(f"You: {turn.content}")
         else:
-            print(f"{message_type}: {message.content}")
+            print(f"AI: {turn.content}")
 
     print()
 
@@ -225,12 +202,14 @@ def main() -> None:
 
     provider = select_llm_provider()
 
-    session_id = select_session()
-
-    history = SQLChatMessageHistory(
-        session_id=session_id,
-        connection=DATABASE_URL,
+    # The conversation store is the single memory
+    # implementation. The CLI and the HTTP API share it,
+    # so a session means the same thing in both.
+    store = SQLiteConversationStore(
+        database_url=DATABASE_URL
     )
+
+    session_id = select_session(store)
 
     # The CLI chooses the provider; the orchestrator only
     # receives a gateway already bound to it.
@@ -297,18 +276,20 @@ def main() -> None:
             break
 
         if user_input.lower() == "/history":
-            display_history(history)
+            display_session(store, session_id)
             continue
 
         if user_input.lower() == "/clear":
-            history.clear()
+            store.clear_session(session_id)
             print("Conversation history cleared.")
             continue
 
         try:
             outcome = orchestrator.handle(
                 user_input,
-                history=history.messages,
+                history=store.get_messages(
+                    session_id
+                ),
             )
 
         except Exception as exc:
@@ -327,9 +308,10 @@ def main() -> None:
             outcome["visualisations"],
         )
 
-        history.add_user_message(user_input)
-        history.add_ai_message(
-            outcome["response"]["answer"]
+        store.add_turn(
+            session_id,
+            user_input,
+            outcome["response"]["answer"],
         )
 
 
