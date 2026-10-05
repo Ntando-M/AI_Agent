@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 import pandas as pd
 from langchain_core.messages import (
+    BaseMessage,
     HumanMessage,
     SystemMessage,
 )
@@ -186,12 +187,29 @@ class DataAnalysisAgent:
         self,
         raw_plan: str,
     ) -> AnalysisPlan:
-        try:
-            parsed = json.loads(raw_plan)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                "The LLM returned an invalid JSON analysis plan."
-            ) from exc
+        """
+        Validate a planner response into an AnalysisPlan.
+
+        Small local models often return the step list
+        directly rather than wrapping it in {"steps": ...}.
+        That is unambiguous, so it is accepted and
+        normalised instead of failing the turn. Anything
+        genuinely ambiguous is rejected.
+        """
+
+        if isinstance(raw_plan, str):
+            try:
+                parsed = json.loads(raw_plan)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "The LLM returned an invalid JSON "
+                    "analysis plan."
+                ) from exc
+        else:
+            parsed = raw_plan
+
+        if isinstance(parsed, list):
+            parsed = {"steps": parsed}
 
         return AnalysisPlan.model_validate(parsed)
 
@@ -262,7 +280,34 @@ User question:
         self,
         question: str,
         results: list[dict[str, Any]],
+        document_context: str = "",
     ) -> str:
+        """
+        Build the synthesis prompt.
+
+        When document context is supplied it is presented
+        as a separate section, explicitly distinguished from
+        the tool results. That separation is what keeps a
+        document statement from being reported as a
+        calculated figure.
+        """
+
+        context_section = ""
+
+        if document_context.strip():
+            context_section = f"""
+Retrieved document context is provided below. Use it
+to explain, contextualise or qualify the tool results.
+Do not treat a document statement as a calculated
+result, and do not let it override the numbers the
+tools returned.
+
+Retrieved document context:
+
+{document_context.strip()}
+
+"""
+
         return f"""
 You are the final response component of an AI Data Analyst.
 
@@ -280,7 +325,7 @@ path exactly as given.
 
 State any limitation where the evidence is insufficient.
 
-User question:
+{context_section}User question:
 
 {question}
 
@@ -322,7 +367,19 @@ Respond with the required structured fields.
         self,
         question: str,
         planning_llm_function: Callable,
+        history: list[BaseMessage] | None = None,
     ) -> AnalysisPlan:
+        """
+        Ask the planner for a tool sequence.
+
+        history is the conversation so far. A follow-up such
+        as "what about the top product?" names no column and
+        no metric, so without the prior turn the planner has
+        nothing to plan from. Including history lets it
+        resolve the reference instead of failing on an
+        unplannable question.
+        """
+
         planning_prompt = self.build_planning_prompt(
             question
         )
@@ -332,6 +389,7 @@ Respond with the required structured fields.
                 SystemMessage(
                     content=planning_prompt
                 ),
+                *(history or []),
                 HumanMessage(
                     content=question
                 ),
@@ -357,13 +415,30 @@ Respond with the required structured fields.
         question: str,
         planning_llm_function: Callable,
         final_llm_function: Callable | None = None,
+        document_context: str = "",
+        history: list[BaseMessage] | None = None,
     ) -> dict[str, Any]:
+        """
+        Plan, execute and synthesise.
+
+        document_context is optional retrieved evidence.
+        When present it is merged into the synthesis prompt
+        so a single answer can rest on both documents and
+        deterministic calculations.
+
+        history is passed to BOTH the planner and the
+        synthesiser. The planner needs it to resolve a
+        follow-up that references an earlier result; the
+        synthesiser needs it to phrase the answer in context.
+        """
+
         if final_llm_function is None:
             final_llm_function = planning_llm_function
 
         plan = self.plan_with_llm(
             question,
             planning_llm_function,
+            history,
         )
 
         results = self.execute_plan(plan)
@@ -371,6 +446,7 @@ Respond with the required structured fields.
         final_prompt = self.build_results_prompt(
             question,
             results,
+            document_context,
         )
 
         final_response = final_llm_function(

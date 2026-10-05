@@ -2,31 +2,12 @@ from pathlib import Path
 
 from sqlalchemy import create_engine
 from langchain_community.chat_message_histories import SQLChatMessageHistory
-from langchain_core.messages import (
-    SystemMessage,
-    HumanMessage,
-)
 
 from config import LLM_PROVIDER
-from data_analysis.agent import DataAnalysisAgent
-from llm.groq_provider import (
-    get_groq_model,
-    get_groq_response,
-    get_groq_raw_response,
-)
-
-from llm.ollama_provider import (
-    get_ollama_model,
-    get_ollama_response,
-    get_ollama_raw_response,
-)
-
-from llm.router import get_llm_response
-from models.response_models import AnalysisResponse
-from rag.retriever import (
-    retrieve_relevant_chunks,
-    format_context_for_prompt,
-)
+from llm.groq_provider import get_groq_model
+from llm.ollama_provider import get_ollama_model
+from orchestrator.llm_gateway import LLMGateway
+from orchestrator.orchestrator import Orchestrator
 
 DATABASE_URL = "sqlite:///chat_history.db"
 DEFAULT_SESSION = "default_session"
@@ -34,37 +15,8 @@ DATASET_PATH = "data/sample_sales.xlsx"
 ANALYTICS_DATABASE_PATH = "data/sales.db"
 
 
-SYSTEM_PROMPT = """
-You are a helpful and professional AI Data Analyst.
-
-Answer the user's question accurately and clearly.
-
-When retrieved document context is provided, use it when relevant.
-Do not invent information that is not supported by the available
-context or conversation.
-
-Your response must contain:
-- answer
-- analysis_type
-- datasets_used
-- calculations_performed
-- key_findings
-- sources
-- confidence
-
-Analysis type must be one of:
-- general
-- document
-- dataset
-- database
-- visualisation
-
-Datasets used, calculations performed, key findings and sources are
-lists. Use an empty list when nothing applies.
-
-Confidence must be a value between 0 and 1. Lower it when the
-available evidence is incomplete.
-""".strip()
+# The response system prompt is owned by the orchestrator, so
+# every routing path speaks through one contract.
 
 
 def select_llm_provider() -> str:
@@ -191,22 +143,6 @@ def select_session() -> str:
         print("Invalid selection.")
 
 
-def get_ai_response(
-    provider: str,
-    messages: list,
-) -> dict:
-    response = get_llm_response(
-        provider,
-        messages,
-    )
-
-    validated_response = AnalysisResponse.model_validate(
-        response
-    )
-
-    return validated_response.model_dump()
-
-
 def display_response(
     response: dict,
     visualisations: list[str] | None = None,
@@ -282,67 +218,6 @@ def display_history(history) -> None:
     print()
 
 
-def get_data_analysis_response(
-    provider: str,
-    agent: DataAnalysisAgent,
-    question: str,
-) -> dict:
-    def planning_llm_function(messages):
-        if provider == "groq":
-            return get_groq_raw_response(messages)
-
-        return get_ollama_raw_response(messages)
-
-    def final_llm_function(messages):
-        return get_ai_response(
-            provider,
-            messages,
-        )
-
-    return agent.analyse(
-        question,
-        planning_llm_function,
-        final_llm_function,
-    )
-
-
-def is_data_analysis_question(
-    question: str,
-) -> bool:
-    analytical_keywords = [
-        "dataset",
-        "data",
-        "rows",
-        "columns",
-        "revenue",
-        "average",
-        "mean",
-        "median",
-        "maximum",
-        "minimum",
-        "highest",
-        "lowest",
-        "top",
-        "region",
-        "product",
-        "monthly",
-        "month",
-        "missing",
-        "percentage",
-        "statistics",
-        "group",
-        "sort",
-        "filter",
-    ]
-
-    question_lower = question.lower()
-
-    return any(
-        keyword in question_lower
-        for keyword in analytical_keywords
-    )
-
-
 def main() -> None:
     print("=" * 60)
     print("AI Data Analyst Chatbot")
@@ -357,41 +232,38 @@ def main() -> None:
         connection=DATABASE_URL,
     )
 
+    # The CLI chooses the provider; the orchestrator only
+    # receives a gateway already bound to it.
+    gateway = LLMGateway.build(provider)
+
     analytics_database_path = None
 
     if Path(ANALYTICS_DATABASE_PATH).exists():
         analytics_database_path = ANALYTICS_DATABASE_PATH
 
-    try:
-        data_analysis_agent = DataAnalysisAgent(
-            DATASET_PATH,
-            database_path=analytics_database_path,
-        )
+    orchestrator = Orchestrator(
+        gateway=gateway,
+        dataset_path=DATASET_PATH,
+        database_path=analytics_database_path,
+    )
 
+    print(f"Dataset loaded: {DATASET_PATH}")
+
+    if orchestrator.has_database:
         print(
-            f"Dataset loaded: {DATASET_PATH}"
+            f"Analytical database: "
+            f"{ANALYTICS_DATABASE_PATH}"
         )
-
-        if data_analysis_agent.has_database:
-            print(
-                f"Analytical database: "
-                f"{ANALYTICS_DATABASE_PATH}"
-            )
-        else:
-            print(
-                f"Analytical database not found at "
-                f"{ANALYTICS_DATABASE_PATH}. "
-                f"Run scripts/create_sales_database.py to "
-                f"create it. SQL tools are disabled."
-            )
-
-    except Exception as exc:
-        data_analysis_agent = None
-
+    else:
         print(
-            f"Warning: Data-analysis agent could not "
-            f"load the dataset: {exc}"
+            f"Analytical database not found at "
+            f"{ANALYTICS_DATABASE_PATH}. "
+            f"Run scripts/create_sales_database.py to "
+            f"create it. SQL tools are disabled."
         )
+
+    for warning in orchestrator.load_warnings:
+        print(f"Warning: {warning}")
 
     print()
     print(f"Session: {session_id}")
@@ -433,121 +305,32 @@ def main() -> None:
             print("Conversation history cleared.")
             continue
 
-        if (
-            data_analysis_agent is not None
-            and is_data_analysis_question(user_input)
-        ):
-            try:
-                analysis = get_data_analysis_response(
-                    provider,
-                    data_analysis_agent,
-                    user_input,
-                )
-
-                response = analysis["response"]
-
-                visualisations = analysis.get(
-                    "visualisations"
-                )
-
-                display_response(
-                    response,
-                    visualisations,
-                )
-
-                history.add_user_message(
-                    user_input
-                )
-
-                history.add_ai_message(
-                    response["answer"]
-                )
-
-                continue
-
-            except Exception as exc:
-                print()
-                print(
-                    f"Data analysis error: {exc}"
-                )
-                print()
-
-                continue
-
         try:
-            retrieved_chunks = retrieve_relevant_chunks(
-                user_input
-            )
-
-            context = format_context_for_prompt(
-                retrieved_chunks
+            outcome = orchestrator.handle(
+                user_input,
+                history=history.messages,
             )
 
         except Exception as exc:
             print()
-            print(
-                f"RAG retrieval warning: {exc}"
-            )
+            print(f"Analysis error: {exc}")
             print()
+            continue
 
-            context = ""
-            retrieved_chunks = []
+        for warning in orchestrator.load_warnings[
+            -1:
+        ]:
+            print(f"Warning: {warning}")
 
-        history_messages = history.messages
-
-        source_labels = sorted(
-            {
-                chunk["filename"]
-                for chunk in retrieved_chunks
-                if chunk.get("filename")
-            }
+        display_response(
+            outcome["response"],
+            outcome["visualisations"],
         )
 
-        augmented_question = f"""
-Use the following retrieved document context when relevant.
-
-Retrieved context:
-{context}
-
-User question:
-{user_input}
-""".strip()
-
-        messages = [
-            SystemMessage(
-                content=SYSTEM_PROMPT
-            ),
-            *history_messages,
-            HumanMessage(
-                content=augmented_question
-            ),
-        ]
-
-        try:
-            response = get_ai_response(
-                provider,
-                messages,
-            )
-
-            if source_labels and not response["sources"]:
-                response["sources"] = source_labels
-
-            display_response(response)
-
-            history.add_user_message(
-                user_input
-            )
-
-            history.add_ai_message(
-                response["answer"]
-            )
-
-        except Exception as exc:
-            print()
-            print(
-                f"LLM error: {exc}"
-            )
-            print()
+        history.add_user_message(user_input)
+        history.add_ai_message(
+            outcome["response"]["answer"]
+        )
 
 
 if __name__ == "__main__":
