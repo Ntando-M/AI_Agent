@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 
 from data_analysis.analyzer import (
+    calculate_monthly_revenue,
     calculate_statistics,
     group_by_column,
     inspect_dataset,
@@ -108,6 +109,205 @@ def build_dataset_summary(
     return summary
 
 
+def _format_currency(value: float) -> str:
+    """
+    Render a revenue figure in a consistent, readable form.
+
+    Deterministic formatting keeps calculated findings
+    comparable across report sections.
+    """
+
+    return f"R{value:,.2f}"
+
+
+def _percent(value: float) -> str:
+    return f"{value:.1f}%"
+
+
+def build_finding_layers(
+    dataframe: pd.DataFrame,
+    summary: dict[str, Any],
+) -> dict[str, list[str]]:
+    """
+    Separate the report into the four evidence layers
+    the roadmap requires.
+
+    A report must distinguish:
+      facts               - what the data literally contains
+      calculated findings - what deterministic arithmetic derived
+      interpretations     - what the pattern appears to mean
+      recommendations     - what to do about it
+
+    Every string is produced without an LLM. The layers differ
+    by claim strength: facts state observed values, findings
+    state arithmetic, interpretations hedge with "appears",
+    and recommendations are actions. A finding that cannot be
+    derived is never invented - its layer stays empty.
+    """
+
+    facts: list[str] = []
+    findings: list[str] = []
+    interpretations: list[str] = []
+    recommendations: list[str] = []
+
+    facts.append(
+        f"The dataset contains {summary['rows']} rows "
+        f"across {summary['columns']} columns."
+    )
+
+    missing_total = sum(
+        summary["missing_values"].values()
+    )
+
+    if missing_total:
+        facts.append(
+            f"{missing_total} cell(s) contain missing "
+            f"values."
+        )
+
+    product_rows = summary.get(
+        "revenue_by_product"
+    )
+
+    region_rows = summary.get(
+        "revenue_by_region"
+    )
+
+    revenue_sum = None
+
+    if product_rows:
+        revenue_sum = sum(
+            row["Revenue"]
+            for row in product_rows
+        )
+
+        facts.append(
+            f"Total revenue across all products is "
+            f"{_format_currency(revenue_sum)}."
+        )
+
+    if (
+        product_rows
+        and revenue_sum
+    ):
+        top_product = product_rows[0]
+
+        facts.append(
+            f"The highest-revenue product is "
+            f"{top_product['Product']} at "
+            f"{_format_currency(top_product['Revenue'])}."
+        )
+
+        share = (
+            top_product["Revenue"] / revenue_sum * 100
+        )
+
+        findings.append(
+            f"{top_product['Product']} accounts for "
+            f"{_percent(share)} of total revenue."
+        )
+
+        if share >= 50:
+            interpretations.append(
+                f"Revenue appears concentrated in "
+                f"{top_product['Product']}, which alone "
+                f"exceeds half of the total."
+            )
+
+            recommendations.append(
+                f"Review the pipeline feeding "
+                f"{top_product['Product']} - concentration "
+                f"of this size makes overall revenue "
+                f"sensitive to that one category."
+            )
+
+    if (
+        region_rows
+        and revenue_sum
+    ):
+        top_region = region_rows[0]
+
+        findings.append(
+            f"{top_region['Region']} generates the most "
+            f"revenue at "
+            f"{_format_currency(top_region['Revenue'])}."
+        )
+
+    monthly = None
+
+    if {
+        "Date",
+        "Revenue",
+    }.issubset(dataframe.columns):
+        monthly = (
+            calculate_monthly_revenue(
+                dataframe,
+                "Date",
+                "Revenue",
+            )
+            .sort_values("Month")
+        )
+
+    if (
+        monthly is not None
+        and len(monthly) >= 2
+    ):
+        first_month = monthly.iloc[0]
+        last_month = monthly.iloc[-1]
+
+        if first_month["Revenue"]:
+            change = (
+                (
+                    last_month["Revenue"]
+                    - first_month["Revenue"]
+                )
+                / first_month["Revenue"]
+                * 100
+            )
+
+            findings.append(
+                f"Revenue moved from "
+                f"{_format_currency(first_month['Revenue'])} "
+                f"in {first_month['Month']} to "
+                f"{_format_currency(last_month['Revenue'])} "
+                f"in {last_month['Month']}, a change of "
+                f"{change:+.1f}%."
+            )
+
+            if change < 0:
+                interpretations.append(
+                    f"The decline appears to begin in "
+                    f"{last_month['Month']}; the dataset does "
+                    f"not contain evidence of its cause."
+                )
+
+                recommendations.append(
+                    f"Correlate the movement in "
+                    f"{last_month['Month']} with any "
+                    f"documented strategy or pricing "
+                    f"changes before acting on it."
+                )
+
+            elif change > 0:
+                interpretations.append(
+                    f"Revenue appears to be growing across "
+                    f"the period covered by the dataset."
+                )
+
+    if not findings:
+        findings.append(
+            "No revenue column was available, so no "
+            "calculated findings could be derived."
+        )
+
+    return {
+        "facts": facts,
+        "calculated_findings": findings,
+        "interpretations": interpretations,
+        "recommendations": recommendations,
+    }
+
+
 def generate_sales_report(
     dataframe: pd.DataFrame,
     report_directory: str | Path = (
@@ -141,6 +341,11 @@ def generate_sales_report(
         dataframe
     )
 
+    layers = build_finding_layers(
+        dataframe,
+        summary,
+    )
+
     charts = generate_standard_sales_charts(
         dataframe,
         output_directory=chart_directory,
@@ -148,6 +353,7 @@ def generate_sales_report(
 
     return {
         "summary": summary,
+        "layers": layers,
         "charts": charts,
     }
 
@@ -174,6 +380,7 @@ def save_report_summary(
     )
 
     summary = report["summary"]
+    layers = report.get("layers")
     charts = report["charts"]
 
     lines: list[str] = []
@@ -186,6 +393,51 @@ def save_report_summary(
     )
     lines.append("")
 
+    section_order = (
+        (
+            "FACTS",
+            "What the data contains.",
+            "facts",
+        ),
+        (
+            "CALCULATED FINDINGS",
+            "Derived by deterministic arithmetic.",
+            "calculated_findings",
+        ),
+        (
+            "INTERPRETATIONS",
+            "What the pattern appears to mean.",
+            "interpretations",
+        ),
+        (
+            "RECOMMENDATIONS",
+            "Suggested actions.",
+            "recommendations",
+        ),
+    )
+
+    for heading, description, key in section_order:
+        entries = (layers or {}).get(key) or []
+
+        lines.append(heading)
+        lines.append("-" * 40)
+        lines.append(description)
+
+        if not entries:
+            lines.append(
+                "- None could be derived "
+                "from the available data."
+            )
+        else:
+            for entry in entries:
+                lines.append(f"- {entry}")
+
+        lines.append("")
+
+    lines.append(
+        "DATASET DETAIL"
+    )
+    lines.append("-" * 40)
     lines.append(
         f"Rows: {summary['rows']}"
     )
