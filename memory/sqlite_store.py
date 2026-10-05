@@ -41,6 +41,18 @@ MESSAGE_STORE_TABLE = Table(
     Column("message", Text),
 )
 
+# A session created through the API has no messages yet, so
+# it would not appear in a listing derived from
+# message_store. The catalog records that a session was
+# deliberately created, which is what lets an API client
+# create a session and then see it in GET /sessions.
+SESSION_CATALOG_TABLE = Table(
+    "conversation_session",
+    MESSAGE_STORE_METADATA,
+    Column("session_id", Text, primary_key=True),
+    Column("created_at", Text),
+)
+
 
 @dataclass
 class SessionSummary:
@@ -295,16 +307,22 @@ class SQLiteConversationStore(ConversationStore):
     # ====================================================
 
     def list_sessions(self) -> list[SessionSummary]:
+        """
+        Every known session, including empty ones.
+
+        The catalog and the message table are unioned: a
+        session created through the API but never used has a
+        catalog row and no messages, and dropping it would
+        make POST /sessions look like it had failed.
+        """
+
         with self.engine.connect() as connection:
-            rows = connection.execute(
+            counted = connection.execute(
                 select(
                     MESSAGE_STORE_TABLE.c.session_id,
                     func.count(
                         MESSAGE_STORE_TABLE.c.id
                     ).label("message_count"),
-                    func.min(
-                        MESSAGE_STORE_TABLE.c.id
-                    ).label("first_id"),
                     func.max(
                         MESSAGE_STORE_TABLE.c.id
                     ).label("last_id"),
@@ -316,21 +334,55 @@ class SQLiteConversationStore(ConversationStore):
                 .group_by(
                     MESSAGE_STORE_TABLE.c.session_id
                 )
-                .order_by(
-                    MESSAGE_STORE_TABLE.c.session_id
-                )
             ).fetchall()
+
+            catalogued = connection.execute(
+                select(SESSION_CATALOG_TABLE.c)
+            ).fetchall()
+
+        by_id = {
+            row.session_id: {
+                "message_count": int(
+                    row.message_count
+                ),
+                "last_id": row.last_id,
+                "created_at": None,
+            }
+            for row in counted
+        }
+
+        for row in catalogued:
+            entry = by_id.setdefault(
+                row.session_id,
+                {
+                    "message_count": 0,
+                    "last_id": None,
+                    "created_at": None,
+                },
+            )
+
+            entry["created_at"] = row.created_at
 
         summaries = []
 
-        for row in rows:
+        for session_id in sorted(by_id):
+            entry = by_id[session_id]
+
             summaries.append(
                 SessionSummary(
-                    session_id=row.session_id,
-                    message_count=int(
-                        row.message_count
+                    session_id=session_id,
+                    message_count=entry[
+                        "message_count"
+                    ],
+                    created_at=entry["created_at"],
+                    last_activity_at=(
+                        self._now()
+                        if entry["message_count"]
+                        else entry["created_at"]
                     ),
-                    preview=self._preview(row.last_id),
+                    preview=self._preview(
+                        entry["last_id"]
+                    ),
                 )
             )
 
@@ -340,8 +392,28 @@ class SQLiteConversationStore(ConversationStore):
         self,
         session_id: str,
     ) -> bool:
+        """
+        Whether the session was created or holds messages.
+
+        Deliberately true for an empty created session: a
+        client that was told "created" must be able to read
+        it back.
+        """
+
         with self.engine.connect() as connection:
-            result = connection.execute(
+            catalogued = connection.execute(
+                select(SESSION_CATALOG_TABLE.c.session_id)
+                .where(
+                    SESSION_CATALOG_TABLE.c.session_id
+                    == session_id
+                )
+                .limit(1)
+            ).fetchone()
+
+            if catalogued is not None:
+                return True
+
+            messaged = connection.execute(
                 select(MESSAGE_STORE_TABLE.c.id)
                 .where(
                     MESSAGE_STORE_TABLE.c.session_id
@@ -350,7 +422,7 @@ class SQLiteConversationStore(ConversationStore):
                 .limit(1)
             ).fetchone()
 
-        return result is not None
+        return messaged is not None
 
     def create_session(
         self,
@@ -369,11 +441,21 @@ class SQLiteConversationStore(ConversationStore):
             if summary.session_id == session_id:
                 return summary
 
+        created_at = self._now()
+
+        with self.engine.begin() as connection:
+            connection.execute(
+                SESSION_CATALOG_TABLE.insert().values(
+                    session_id=session_id,
+                    created_at=created_at,
+                )
+            )
+
         return SessionSummary(
             session_id=session_id,
             message_count=0,
-            created_at=self._now(),
-            last_activity_at=self._now(),
+            created_at=created_at,
+            last_activity_at=created_at,
         )
 
     def delete_session(
@@ -381,14 +463,26 @@ class SQLiteConversationStore(ConversationStore):
         session_id: str,
     ) -> bool:
         with self.engine.begin() as connection:
-            result = connection.execute(
+            catalogued = connection.execute(
+                delete(SESSION_CATALOG_TABLE).where(
+                    SESSION_CATALOG_TABLE.c.session_id
+                    == session_id
+                )
+            )
+
+            messaged = connection.execute(
                 delete(MESSAGE_STORE_TABLE).where(
                     MESSAGE_STORE_TABLE.c.session_id
                     == session_id
                 )
             )
 
-            return result.rowcount > 0
+            # An empty created session is still a session, so
+            # removing its catalog row counts as a delete.
+            return (
+                catalogued.rowcount > 0
+                or messaged.rowcount > 0
+            )
 
     def clear_session(
         self,

@@ -193,13 +193,107 @@ def test_create_never_wipes_history(store):
 
 def test_create_on_empty_store_adds_no_message(store):
     """
-    Creating a session must not make it appear to exist,
-    because existence means "has messages".
+    Creating a session must not invent conversation
+    content, but the session must still be listable.
     """
 
     store.create_session("fresh")
 
-    assert store.session_exists("fresh") is False
+    assert store.get_turns("fresh") == []
+
+
+def test_created_empty_session_is_listed(store):
+    """
+    An API client that creates a session and then lists
+    them must see it. Without this, POST /sessions looks
+    like it silently failed.
+    """
+
+    store.create_session("fresh")
+
+    ids = [
+        summary.session_id
+        for summary in store.list_sessions()
+    ]
+
+    assert "fresh" in ids
+
+
+def test_created_empty_session_exists(store):
+    store.create_session("fresh")
+
+    assert store.session_exists("fresh") is True
+
+
+def test_created_empty_session_reports_zero_messages(
+    store,
+):
+    store.create_session("fresh")
+
+    summary = [
+        item
+        for item in store.list_sessions()
+        if item.session_id == "fresh"
+    ][0]
+
+    assert summary.message_count == 0
+
+
+def test_created_session_records_a_creation_time(store):
+    store.create_session("fresh")
+
+    summary = store.list_sessions()[0]
+
+    assert summary.created_at is not None
+
+
+def test_creating_twice_records_one_row(store):
+    store.create_session("fresh")
+    store.create_session("fresh")
+
+    assert len(store.list_sessions()) == 1
+
+
+def test_delete_removes_an_empty_session_from_the_list(
+    store,
+):
+    store.create_session("fresh")
+
+    store.delete_session("fresh")
+
+    assert store.list_sessions() == []
+
+
+def test_session_with_messages_only_is_still_listed(store):
+    """
+    A session written directly by the CLI has no catalog
+    row, and must still appear.
+    """
+
+    store.add_turn("cli_session", "q", "a")
+
+    ids = [
+        summary.session_id
+        for summary in store.list_sessions()
+    ]
+
+    assert "cli_session" in ids
+
+
+def test_catalogued_session_with_messages_is_listed_once(
+    store,
+):
+    store.create_session("both")
+    store.add_turn("both", "q", "a")
+
+    matching = [
+        summary
+        for summary in store.list_sessions()
+        if summary.session_id == "both"
+    ]
+
+    assert len(matching) == 1
+    assert matching[0].message_count == 2
 
 
 def test_delete_removes_the_session(store):
@@ -208,6 +302,18 @@ def test_delete_removes_the_session(store):
     assert store.delete_session("s1") is True
     assert store.session_exists("s1") is False
     assert store.get_turns("s1") == []
+
+
+def test_delete_of_a_catalogued_empty_session(store):
+    """
+    An empty created session is real, so deleting it is a
+    success rather than a 404.
+    """
+
+    store.create_session("fresh")
+
+    assert store.delete_session("fresh") is True
+    assert store.session_exists("fresh") is False
 
 
 def test_delete_of_unknown_session_returns_false(store):
