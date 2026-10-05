@@ -16,6 +16,7 @@ data/sales.db
 
 charts/
 outputs/
+reports/
 
 chroma_db/*
 !chroma_db/.gitkeep
