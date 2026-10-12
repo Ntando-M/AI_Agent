@@ -549,6 +549,11 @@ export class App implements OnInit {
 
   protected showView(next: 'chat' | 'manage' | 'reports'): void {
     this.view.set(next);
+    // Reports get the full width: the sidebar is collapsed
+    // so the list and the report itself have room to breathe.
+    if (next === 'reports') {
+      this.sidebarOpen.set(false);
+    }
   }
 
   protected toggleSidebar(): void {
