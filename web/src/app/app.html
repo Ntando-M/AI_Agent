@@ -1,0 +1,617 @@
+<div class="app">
+  <header>
+    <div class="header-left">
+      <button
+        type="button"
+        class="icon-btn"
+        [attr.aria-expanded]="sidebarOpen()"
+        [attr.aria-label]="sidebarOpen() ? 'Hide sidebar' : 'Show sidebar'"
+        [title]="sidebarOpen() ? 'Hide sidebar' : 'Show sidebar'"
+        (click)="toggleSidebar()"
+      >
+        <span aria-hidden="true">☰</span>
+      </button>
+
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">AD</div>
+        <div class="title-block">
+          <h1>AI Data Analyst</h1>
+          <p>
+            Ask a question. The answer comes from your documents, your datasets and
+            your database — and it shows which tools produced it.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    
+    <div class="status">
+      @if (healthError(); as message) {
+        <span class="pill bad">{{ message }}</span>
+      } @else if (health(); as state) {
+
+      @if (state.status === 'ok') {
+        <span class="pill">
+          <span class="live-indicator">LIVE</span>
+        </span>
+      }
+
+      
+      <span class="pill meta">provider: {{ state.provider }}</span>
+      <span class="pill meta">v{{ state.version }}</span>
+
+      <span
+        class="pill meta"
+        [class.on]="state.dataset_loaded"
+      >
+        dataset
+      </span>
+
+      <span
+        class="pill meta"
+        [class.on]="state.database_loaded"
+      >
+        database
+      </span>
+
+      <span
+        class="pill meta"
+        [class.on]="state.documents_indexed"
+      >
+        documents
+      </span>
+
+    } @else {
+      <span class="pill">checking…</span>
+    }
+  </div>
+  </header>
+
+  @if (banner(); as message) {
+    <div class="banner" role="alert">
+      <span>{{ message }}</span>
+      <button type="button" (click)="dismiss()">dismiss</button>
+    </div>
+  }
+
+  <main [class.sidebar-hidden]="!sidebarOpen()">
+    @if (sidebarOpen()) {
+      <aside class="sidebar">
+        <section class="panel">
+              <!-- <nav class="tabs" aria-label="Views"> -->
+          <button
+            type="button"
+            class="tab"
+            [class.active]="view() === 'chat'"
+            [attr.aria-current]="view() === 'chat' ? 'page' : null"
+            (click)="showView('chat')"
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            class="tab"
+            [class.active]="view() === 'manage'"
+            [attr.aria-current]="view() === 'manage' ? 'page' : null"
+            (click)="showView('manage')"
+          >
+            Data
+            @if (documentCount(); as count) {
+              <span class="tab-badge">{{ count }}</span>
+            }
+          </button>
+          <button
+            type="button"
+            class="tab"
+            [class.active]="view() === 'reports'"
+            [attr.aria-current]="view() === 'reports' ? 'page' : null"
+            (click)="showView('reports')"
+          >
+            Reports
+            @if (reports().length) {
+              <span class="tab-badge">{{ reports().length }}</span>
+            }
+          </button>
+        <!-- </nav> -->
+
+        </section>
+        <section class="panel">
+          <h2>Conversations</h2>
+          <button type="button" class="primary-btn" (click)="openNamingDialog()" [disabled]="busy()">
+            New conversation
+          </button>
+          <ul class="sessions">
+            @for (session of sessions(); track session.session_id) {
+              <li [class.active]="session.session_id === activeSession()">
+                <button
+                  type="button"
+                  class="session-row"
+                  (click)="loadSession(session.session_id)"
+                  [title]="session.session_id"
+                >
+                  <span class="session-info">
+                    <span class="session-name">{{ session.name }}</span>
+                    <span class="session-count">{{ session.message_count }} msg</span>
+                  </span>
+                  <span class="session-chevron" aria-hidden="true">›</span>
+                </button>
+                <button
+                  type="button"
+                  class="rename-btn"
+                  title="Rename conversation"
+                  [attr.aria-label]="'Rename ' + session.name"
+                  (click)="openRenameDialog(session.session_id)"
+                >
+                  <span class="rename-icon" aria-hidden="true">✎</span>
+                </button>
+                <button
+                  type="button"
+                  class="delete-btn"
+                  title="Delete conversation"
+                  (click)="removeSession(session.session_id)"
+                >
+                  <span class="delete-icon" aria-hidden="true">×</span>
+                </button>
+              </li>
+            } @empty {
+              <li class="empty">No conversations yet.</li>
+            }
+          </ul>
+        </section>
+      </aside>
+    }
+
+    @if (view() === 'chat') {
+      <section class="conversation">
+        @if (activeSessionName(); as name) {
+          <div class="conversation-head">
+            <h2>{{ name }}</h2>
+            @if (activeSession(); as id) {
+              <button
+                type="button"
+                class="rename-btn head-rename"
+                title="Rename conversation"
+                aria-label="Rename this conversation"
+                (click)="openRenameDialog(id)"
+              >
+                <span class="rename-icon" aria-hidden="true">✎</span>
+                <span class="rename-text">Rename</span>
+              </button>
+            }
+          </div>
+        }
+
+        <div class="transcript" #transcript>
+        @for (turn of turns(); track $index) {
+          <article class="turn">
+            <header class="turn-head">
+              <p class="question">{{ turn.question }}</p>
+              <span class="turn-avatar" aria-hidden="true">AD</span>
+            </header>
+
+            @if (turn.pending) {
+              <div class="pending-state">
+                <span class="spinner" aria-hidden="true"></span>
+                <p>Thinking…</p>
+              </div>
+            } @else if (turn.error; as message) {
+              <p class="error">{{ message }}</p>
+            } @else if (turn.answer; as answer) {
+              <p class="answer">{{ answer.answer }}</p>
+
+              @if (!turn.restored || turn.hasEvidence) {
+                <div class="tags">
+                  <span class="tag">{{ answer.analysis_type }}</span>
+                  <span class="tag">confidence {{ confidencePercent(answer.confidence) }}</span>
+                </div>
+              }
+
+              @if (turn.toolsUsed.length) {
+                <details class="panel">
+                  <summary>
+                    <span class="summary-text">
+                      Tools ({{ turn.toolsUsed.length }})
+                    </span>
+                  </summary>
+                  <ul class="evidence">
+                    @for (tool of turn.toolsUsed; track tool) {
+                      <li><code>{{ tool }}</code></li>
+                    }
+                  </ul>
+                </details>
+              }
+
+              @if (answer.calculations_performed.length) {
+                <details class="panel">
+                  <summary>
+                    <span class="summary-text">
+                      Calculations ({{ answer.calculations_performed.length }})
+                    </span>
+                  </summary>
+                  <ul class="evidence">
+                    @for (item of answer.calculations_performed; track item) {
+                      <li><code>{{ item }}</code></li>
+                    }
+                  </ul>
+                </details>
+              }
+
+              @if (answer.key_findings.length) {
+                <details class="panel" open>
+                  <summary>
+                    <span class="summary-text">
+                      Findings ({{ answer.key_findings.length }})
+                    </span>
+                  </summary>
+                  <ul class="evidence">
+                    @for (item of answer.key_findings; track item) {
+                      <li>{{ item }}</li>
+                    }
+                  </ul>
+                </details>
+              }
+
+              @if (answer.sources.length) {
+                <details class="panel">
+                  <summary>
+                    <span class="summary-text">
+                      Sources ({{ answer.sources.length }})
+                    </span>
+                  </summary>
+                  <ul class="evidence">
+                    @for (item of answer.sources; track item) {
+                      <li>{{ item }}</li>
+                    }
+                  </ul>
+                </details>
+              }
+
+              @if (turn.visualisations.length) {
+                <p class="charts">
+                  Charts written:
+                  @for (path of turn.visualisations; track path) {
+                    <code>{{ chartName(path) }}</code>
+                  }
+                </p>
+              }
+            }
+          </article>
+        } @empty {
+          <div class="welcome">
+            <h2>Ask something</h2>
+            <p>
+              Every number in the answer is calculated by Pandas or SQL, never by
+              the model. The tools that ran are listed under each answer.
+            </p>
+            <ul class="samples">
+              <li><button type="button" class="sample-btn" (click)="useSample('What was total revenue?')">What was total revenue?</button></li>
+              <li><button type="button" class="sample-btn" (click)="useSample('Which region earned the most?')">Which region earned the most?</button></li>
+              <li><button type="button" class="sample-btn" (click)="useSample('Show me revenue by product')">Show me revenue by product</button></li>
+              <li><button type="button" class="sample-btn" (click)="useSample('What does the strategy document say?')">What does the strategy document say?</button></li>
+            </ul>
+          </div>
+        }
+      </div>
+
+      <form class="composer" (submit)="$event.preventDefault(); ask()">
+        <input
+          type="text"
+          name="question"
+          placeholder="Ask a question about your data…"
+          [ngModel]="question()"
+          (ngModelChange)="question.set($event)"
+          [disabled]="busy()"
+          autocomplete="off"
+        />
+        <button
+          type="submit"
+          class="primary-btn"
+          [disabled]="busy() || !question().trim()"
+        >
+          <span class="btn-text">{{ asking() ? 'Asking…' : 'Ask' }}</span>
+          <span class="btn-icon" aria-hidden="true">›</span>
+        </button>
+      </form>
+      </section>
+    } @else {
+      <section class="manage">
+        <header class="manage-head">
+          <h2>Data</h2>
+          <p>
+            Documents and datasets the engine can draw on. Each is listed
+            under its filename.
+          </p>
+        </header>
+
+        @if (uploadMessage(); as message) {
+          <p class="upload-message">{{ message }}</p>
+        }
+
+        <div class="manage-grid">
+          <section class="manage-card">
+            <h3>Documents</h3>
+            <ul class="documents">
+              @for (document of documents(); track document) {
+                <li>
+                  <span class="document-name">{{ document }}</span>
+                  <button
+                    type="button"
+                    class="delete-btn"
+                    title="Delete document"
+                    [disabled]="deleting() === document"
+                    (click)="removeDocument(document)"
+                  >
+                    <span class="delete-icon" aria-hidden="true">
+                      {{ deleting() === document ? '…' : '×' }}
+                    </span>
+                  </button>
+                </li>
+              } @empty {
+                <li class="empty">None uploaded.</li>
+              }
+            </ul>
+
+            <label class="upload-block">
+              <span class="upload-label">Upload document</span>
+              <input
+                #documentInput
+                type="file"
+                accept=".txt,.pdf,.docx"
+                [disabled]="busy()"
+                (change)="chooseUpload(documentInput, 'documents')"
+              />
+            </label>
+          </section>
+
+          <section class="manage-card">
+            <h3>Datasets</h3>
+            <ul class="datasets">
+              @for (dataset of datasets()?.datasets ?? []; track dataset.path) {
+                <li [title]="dataset.path">
+                  <span class="dataset-info">
+                    <span class="dataset-name">{{ dataset.name }}</span>
+                    <span class="dataset-meta">
+                      {{ dataset.rows }} rows · {{ dataset.columns.length }} cols
+                    </span>
+                  </span>
+                  @if (dataset.registered) {
+                    <button
+                      type="button"
+                      class="delete-btn"
+                      title="Delete dataset"
+                      [disabled]="deleting() === dataset.name"
+                      (click)="removeDataset(dataset.name)"
+                    >
+                      <span class="delete-icon" aria-hidden="true">
+                        {{ deleting() === dataset.name ? '…' : '×' }}
+                      </span>
+                    </button>
+                  }
+                </li>
+              } @empty {
+                <li class="empty">None registered.</li>
+              }
+            </ul>
+
+            <label class="upload-block">
+              <span class="upload-label">Upload dataset</span>
+              <input
+                #datasetInput
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                [disabled]="busy()"
+                (change)="chooseUpload(datasetInput, 'datasets')"
+              />
+            </label>
+          </section>
+        </div>
+
+        <p class="panel-note">
+          Uploads are capped at 10&nbsp;MB. Only
+          <code>.csv .xlsx .xls</code>,
+          <code>.txt .pdf .docx</code> are accepted. Deleting a document also
+          removes its indexed chunks.
+        </p>
+      </section>
+    }
+
+    @if (view() === 'reports') {
+      <section class="reports">
+        @if (activeReport(); as report) {
+          <div class="report-head">
+            <button
+              type="button"
+              class="ghost-btn"
+              (click)="closeReport()"
+            >
+              ← All reports
+            </button>
+
+            <h2>
+              {{ report.dataset_name || 'Report' }}
+            </h2>
+
+            <p class="report-meta">
+              {{ reportDate(report.created_at) }}
+            </p>
+          </div>
+
+          @for (section of reportSections; track section.key) {
+            @if (report.layers[section.key]?.length) {
+              <article class="report-section">
+                <h3>{{ section.title }}</h3>
+                <p class="report-hint">{{ section.hint }}</p>
+                <ul>
+                  @for (line of report.layers[section.key]; track line) {
+                    <li>{{ line }}</li>
+                  }
+                </ul>
+              </article>
+            }
+          }
+
+          @if (report.chart_images | keyvalue; as images) {
+            @if (images.length) {
+              <article class="report-section">
+                <h3>Charts</h3>
+                <div class="report-charts">
+                  @for (chart of images; track chart.key) {
+                    <figure class="report-chart">
+                      <img
+                        [src]="chart.value"
+                        [alt]="chart.key"
+                        loading="lazy"
+                      />
+                      <figcaption>{{ chart.key }}</figcaption>
+                    </figure>
+                  }
+                </div>
+              </article>
+            }
+          }
+
+          <details class="panel">
+            <summary>
+              <span class="summary-text">Full text report</span>
+            </summary>
+            <pre class="report-text">{{ report.content }}</pre>
+          </details>
+        } @else {
+          <div class="report-head">
+            <h2>Reports</h2>
+            <p class="report-meta">
+              Deterministic summaries of the loaded dataset. Every figure is
+              calculated, never written by the model.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            class="primary-btn"
+            [disabled]="generatingReport()"
+            (click)="generateReport()"
+          >
+            {{ generatingReport() ? 'Generating…' : 'Generate report' }}
+          </button>
+
+          @if (reportError(); as message) {
+            <p class="error">{{ message }}</p>
+          }
+
+          <ul class="report-list">
+            @for (report of reports(); track report.report_id) {
+              <li>
+                <button
+                  type="button"
+                  class="report-row"
+                  (click)="openReport(report.report_id)"
+                >
+                  <span class="report-name">
+                    {{ report.dataset_name || 'Report' }}
+                  </span>
+                  <span class="report-preview">{{ report.preview }}</span>
+                  <span class="report-date">
+                    {{ reportDate(report.created_at) }}
+                  </span>
+                </button>
+              </li>
+            } @empty {
+              <li class="empty">No reports yet.</li>
+            }
+          </ul>
+        }
+      </section>
+    }
+  </main>
+
+  @if (namingOpen()) {
+    <div class="modal-backdrop" (click)="closeNamingDialog()">
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="naming-title"
+        (click)="$event.stopPropagation()"
+      >
+        <h2 id="naming-title">
+          {{ isRenaming() ? 'Rename conversation' : 'New conversation' }}
+        </h2>
+        <p class="modal-hint">
+          @if (isRenaming()) {
+            Renaming “{{ renamingLabel() }}”. Enter a new name.
+          } @else {
+            Give it a name, or leave it blank to start an unnamed conversation.
+          }
+        </p>
+
+        <input
+          type="text"
+          name="conversationName"
+          class="modal-input"
+          placeholder="Untitled conversation"
+          maxlength="120"
+          autocomplete="off"
+          [ngModel]="newName()"
+          (ngModelChange)="newName.set($event)"
+          (keydown)="onNamingKeydown($event)"
+          autofocus
+        />
+
+        <div class="modal-actions">
+          <button type="button" class="ghost-btn" (click)="closeNamingDialog()">
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="primary-btn"
+            (click)="confirmNaming()"
+          >
+            {{ isRenaming() ? 'Rename' : 'Create' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  @if (pendingUpload(); as pending) {
+    <div class="modal-backdrop" (click)="cancelUpload()">
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="upload-title"
+        (click)="$event.stopPropagation()"
+      >
+        <h2 id="upload-title">
+          Upload {{ pending.kind === 'datasets' ? 'dataset' : 'document' }}
+        </h2>
+        <p class="modal-hint">
+          It will be listed under its filename — no name needed.
+        </p>
+
+        <div class="file-card">
+          <span class="file-name">{{ pending.file.name }}</span>
+          <span class="file-meta">{{ fileSize(pending.file.size) }}</span>
+        </div>
+
+        @if (uploadMessage(); as message) {
+          <p class="modal-error">{{ message }}</p>
+        }
+
+        <div class="modal-actions">
+          <button type="button" class="ghost-btn" (click)="cancelUpload()">
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="primary-btn"
+            [disabled]="uploading()"
+            (click)="confirmUpload()"
+          >
+            {{ uploading() ? 'Uploading…' : 'Upload' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+</div>
