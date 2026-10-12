@@ -205,6 +205,80 @@ def test_general_question_requests_nothing():
     assert plan.is_empty is True
 
 
+def test_document_subject_question_does_not_request_dataset():
+    """
+    Regression: "What does the strategy document say about
+    revenue?" asked for a reading of a document, but the
+    quantitative word "revenue" also routed it to the
+    dataset. The analysis path then had no tool to plan and
+    the question failed. A named document is the subject
+    here, so its subject matter is not a calculation request.
+    """
+
+    plan = classify_question(
+        "What does the strategy document say about revenue?"
+    )
+
+    assert plan.documents is True
+    assert plan.dataset is False
+
+
+def test_explanatory_document_question_stays_multi_source():
+    """
+    The scoping rule must not break the roadmap's
+    multi-source case. An explanatory question still needs
+    the numbers as well as the document.
+    """
+
+    plan = classify_question(
+        "Why did revenue decline, according to the "
+        "strategy document?"
+    )
+
+    assert plan.documents is True
+    assert plan.dataset is True
+    assert plan.is_multi_source is True
+
+
+def test_dataset_question_does_not_request_documents():
+    """
+    Regression: the bare opener "what is the" was a document
+    signal, so "what is the total sales by region?" ran
+    document retrieval for nothing and picked up unrelated
+    chunks. A question form is not an evidence signal.
+    """
+
+    plan = classify_question(
+        "What is the total sales by region?"
+    )
+
+    assert plan.dataset is True
+    assert plan.documents is False
+
+
+def test_qualitative_document_question_still_requests_documents():
+    """
+    Dropping the bare openers must not lose the document
+    intent they were standing in for.
+    """
+
+    plan = classify_question(
+        "What does the document say about refunds?"
+    )
+
+    assert plan.documents is True
+
+
+def test_database_question_does_not_request_documents():
+    plan = classify_question(
+        "Using the sales database, what is the total "
+        "revenue by region?"
+    )
+
+    assert plan.database is True
+    assert plan.documents is False
+
+
 def test_plan_reasons_are_recorded():
     plan = classify_question(
         "What was the total revenue?"
@@ -319,12 +393,19 @@ def test_dataset_used_is_backfilled_when_model_omits_it(
     ]
 
 
-def test_dataset_used_is_not_overwritten_when_present(
+def test_dataset_label_is_deterministic_not_model_claimed(
     no_documents,
 ):
+    """
+    The dataset actually used is recorded, not whatever the
+    model claimed. A model asked to name its dataset may
+    answer with a guess or a bare filename; provenance comes
+    from the engine that loaded it.
+    """
+
     stub = StubGateway(
         response=make_response(
-            datasets_used=["sample_sales.xlsx"]
+            datasets_used=["some_invented_name.csv"]
         )
     )
 
@@ -335,7 +416,7 @@ def test_dataset_used_is_not_overwritten_when_present(
     )
 
     assert result["response"]["datasets_used"] == [
-        "sample_sales.xlsx"
+        DATASET_PATH
     ]
 
 
@@ -614,6 +695,54 @@ def test_tool_name_is_not_reported_as_a_source(
         "aggregate_dataset"
         not in result["response"]["sources"]
     )
+
+
+def test_tool_derived_source_text_is_rejected(
+    no_documents,
+):
+    """
+    Regression: the model answered with
+    "group_by_column result", which reached the Sources
+    panel and duplicated the Tools list. A tool-derived
+    description is not a source, and the two lists must
+    stay disjoint.
+    """
+
+    stub = StubGateway(
+        plan={
+            "steps": [
+                {
+                    "tool": "group_by_column",
+                    "arguments": {
+                        "group_column": "Region",
+                        "aggregation_column": "Revenue",
+                        "operation": "sum",
+                    },
+                }
+            ]
+        },
+        response=make_response(
+            sources=["group_by_column result"],
+        ),
+    )
+
+    orchestrator = build_orchestrator(stub)
+
+    result = orchestrator.handle(
+        "What were the total sales by region?"
+    )
+
+    sources = result["response"]["sources"]
+    tools = result["tools_used"]
+
+    assert "group_by_column result" not in sources
+
+    # No tool name, or anything derived from one, is a source.
+    for tool in tools:
+        assert tool not in sources
+
+    # The dataset the tool ran against is the real source.
+    assert sources == [DATASET_PATH]
 
 
 def test_chart_path_is_not_reported_as_a_source(
@@ -1109,11 +1238,17 @@ def test_every_response_validates(no_documents):
     assert validated.confidence == 0.5
 
 
-def test_out_of_range_confidence_is_rejected():
-    with pytest.raises(Exception):
-        AnalysisResponse.model_validate(
-            make_response(confidence=1.5)
-        )
+def test_out_of_range_confidence_is_clamped():
+    """
+    A percentage-style confidence (1.5, 100) is clamped into
+    range rather than rejecting the whole response.
+    """
+
+    validated = AnalysisResponse.model_validate(
+        make_response(confidence=1.5)
+    )
+
+    assert validated.confidence == 1.0
 
 
 def test_handle_reports_tools_and_sources(

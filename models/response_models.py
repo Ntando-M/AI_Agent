@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 AnalysisType = Literal[
@@ -75,5 +75,28 @@ class AnalysisResponse(BaseModel):
         description=(
             "The model's confidence in the answer, from 0.0 to "
             "1.0. Reduce this when the evidence is incomplete."
-        )
+        ),
     )
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def clamp_confidence(cls, value):
+        """
+        Clamp confidence to [0.0, 1.0].
+
+        LLMs frequently return confidence as a percentage (e.g. 100)
+        even when the schema says 0.0-1.0. Rather than rejecting the
+        entire response, scale values above 1.0 down to the valid
+        range. Values already in range pass through unchanged.
+        """
+        if value is None:
+            return 0.0
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if numeric > 1.0:
+            return 1.0
+        if numeric < 0.0:
+            return 0.0
+        return numeric

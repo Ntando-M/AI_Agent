@@ -6,6 +6,9 @@ from typing import Any
 from langchain_core.messages import BaseMessage
 
 from data_analysis.agent import DataAnalysisAgent
+from data_analysis.tool_registry import (
+    get_tool_data_source,
+)
 from models.response_models import AnalysisResponse
 from orchestrator.intent import (
     SourcePlan,
@@ -35,27 +38,23 @@ what a document states from what a calculation produced.
 Do not invent information that is not supported by the
 provided context, tool results or conversation.
 
-Your response must contain:
-- answer
-- analysis_type
-- datasets_used
-- calculations_performed
-- key_findings
-- sources
-- confidence
+Return ONLY valid JSON matching this structure:
 
-Analysis type must be one of:
-- general
-- document
-- dataset
-- database
-- visualisation
+{
+  "answer": "the complete answer, in clear natural language",
+  "analysis_type": "general | document | dataset | database | visualisation",
+  "datasets_used": ["name of dataset or database table used"],
+  "calculations_performed": ["description of each deterministic calculation that was actually executed"],
+  "key_findings": ["the most important findings, each a concrete result supported by the evidence"],
+  "sources": ["documents, filenames or database tables that provided the evidence"],
+  "confidence": 0.0
+}
 
-Datasets used, calculations performed, key findings and
-sources are lists. Use an empty list when nothing applies.
+Every field is required. Use an empty list when nothing
+applies. Do not add extra fields, and do not wrap the JSON in
+markdown fences.
 
-Sources must name the documents or tables that provided the
-evidence.
+analysis_type must be one of the five listed values.
 
 Confidence must be a value between 0 and 1. Lower it when the
 available evidence is incomplete, and lower it when a tool
@@ -64,56 +63,33 @@ question.
 """.strip()
 
 
-GENERATED_ARTEFACT_SUFFIXES = (
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".svg",
-)
-
-
-def _is_generated_artefact(
-    source: str,
-    generated_paths: list[str] | None = None,
-) -> bool:
+def _executed_tool_names(
+    tools_used: list[str] | None,
+) -> list[str]:
     """
-    Whether a claimed "source" is a file this run produced.
-
-    A chart path is an output, not evidence. Reporting it as
-    a source tells the reader nothing they can verify, and
-    it duplicates the visualisations list that already
-    carries the path.
-
-    Only paths the run actually wrote, plus generated
-    output directories, count. ".pdf" is deliberately not
-    treated as generated: a retrieved document is a
-    legitimate source.
+    Distinct tool names, in execution order.
     """
 
-    if generated_paths:
-        normalised_outputs = {
-            path.replace("\\", "/").lower()
-            for path in generated_paths
-        }
+    names: list[str] = []
 
-        if (
-            source.replace("\\", "/").lower()
-            in normalised_outputs
-        ):
-            return True
+    for name in tools_used or []:
+        if name and name not in names:
+            names.append(name)
 
-    lowered = source.lower().strip()
+    return names
 
-    if any(
-        lowered.endswith(suffix)
-        for suffix in GENERATED_ARTEFACT_SUFFIXES
-    ):
-        return True
 
-    return (
-        lowered.startswith("outputs")
-        or lowered.startswith("reports")
-    )
+def _is_known_tool(tool_name: str) -> bool:
+    """
+    Whether a name belongs to a registered analysis tool.
+    """
+
+    try:
+        get_tool_data_source(tool_name)
+    except ValueError:
+        return False
+
+    return True
 
 
 class Orchestrator:
@@ -239,8 +215,91 @@ class Orchestrator:
         )
 
     # ====================================================
-    # EVIDENCE MERGING
+    # EVIDENCE
     # ====================================================
+
+    def database_table_labels(self) -> list[str]:
+        """
+        Tables present in the analytical database.
+
+        Used only to attribute evidence after a SQL tool has
+        actually run; a table that exists but was never
+        queried is not evidence.
+        """
+
+        agent = self.data_agent
+
+        if agent is None or agent.sql_agent is None:
+            return []
+
+        try:
+            tables = agent.sql_agent.list_tables()
+        except Exception as exc:
+            self.load_warnings.append(
+                f"Could not list database tables: {exc}"
+            )
+
+            return []
+
+        return sorted(
+            str(table) for table in tables
+        )
+
+    def collect_evidence_sources(
+        self,
+        source_labels: list[str],
+        tools_used: list[str] | None,
+    ) -> list[str]:
+        """
+        The evidence actually used to answer, in priority
+        order: retrieved document filenames first, then the
+        data the executed tools ran against.
+
+        Deterministic, and deliberately not taken from the
+        model. The response contract asks the model to name
+        its sources, and a model asked for evidence names the
+        tool that produced it - "group_by_column result" -
+        which is not a source at all. Anything the model
+        claims about provenance is therefore discarded, and
+        the sources list is built from what was retrieved or
+        executed. That is also what keeps it disjoint from
+        tools_used, which the UI renders separately.
+        """
+
+        evidence: list[str] = []
+
+        for label in source_labels:
+            if label and label not in evidence:
+                evidence.append(label)
+
+        names = _executed_tool_names(tools_used)
+
+        # The dataset counts as evidence only when a dataframe
+        # tool actually ran against it. A SQL-only question runs
+        # against the database, and naming the spreadsheet there
+        # would attribute the answer to data it never touched.
+        if self.dataset_label and any(
+            _is_known_tool(name)
+            and get_tool_data_source(name)
+            == "dataframe"
+            for name in names
+        ):
+            evidence.append(self.dataset_label)
+
+        # A SQL tool only counts as database evidence when the
+        # name is a real registered tool, so a hallucinated
+        # tool name cannot add a table to the sources.
+        if any(
+            _is_known_tool(name)
+            and get_tool_data_source(name)
+            == "database"
+            for name in names
+        ):
+            evidence.extend(
+                self.database_table_labels()
+            )
+
+        return list(dict.fromkeys(evidence))
 
     def apply_evidence(
         self,
@@ -248,57 +307,32 @@ class Orchestrator:
         source_labels: list[str],
         used_analysis: bool,
         tools_used: list[str] | None = None,
-        generated_paths: list[str] | None = None,
     ) -> dict[str, Any]:
         """
-        Reconcile what the model claimed against what was
-        actually retrieved or executed.
+        Replace the model's claimed evidence with what was
+        actually retrieved and executed.
 
-        The roadmap requires that sources and datasets are
-        recorded so a finding can be traced. A model may
-        under-report, so deterministic evidence fills the gap
-        rather than trusting the model to remember.
+        The roadmap requires that sources are recorded so a
+        finding can be traced. A model may under-report or
+        invent, so provenance is taken from the deterministic
+        engine rather than from the model's own account of
+        where its answer came from.
         """
 
-        executed_tools = tools_used or []
+        response["sources"] = (
+            self.collect_evidence_sources(
+                source_labels,
+                tools_used,
+            )
+        )
 
-        if source_labels or executed_tools:
-            # A model asked for tool names here sometimes
-            # answers with the tool it ran, or with the path
-            # of a file it just wrote. Neither is inspectable
-            # evidence a reader could follow, so both are
-            # stripped. Reconciliation is deterministic
-            # rather than trusting the model to classify
-            # its own evidence.
-            model_sources = [
-                source
-                for source in response.get(
-                    "sources", []
-                )
-                if source not in executed_tools
-                and not _is_generated_artefact(
-                    source,
-                    generated_paths,
-                )
-            ]
-
-            response["sources"] = list(
-                dict.fromkeys(
-                    [
-                        *model_sources,
-                        *source_labels,
-                    ]
+        if used_analysis:
+            response["datasets_used"] = (
+                self.collect_evidence_sources(
+                    [],
+                    tools_used,
                 )
             )
-
-        if (
-            used_analysis
-            and not response.get("datasets_used")
-            and self.dataset_label is not None
-        ):
-            response["datasets_used"] = [
-                self.dataset_label
-            ]
 
         return response
 
@@ -538,7 +572,6 @@ User question:
             source_labels,
             used_analysis,
             tools_used,
-            visualisations,
         )
 
         response["analysis_type"] = (

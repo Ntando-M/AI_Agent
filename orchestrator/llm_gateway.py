@@ -9,6 +9,7 @@ from langchain_core.messages import (
 )
 
 from llm.groq_provider import (
+    RateLimitError,
     get_groq_raw_response,
     get_groq_response,
 )
