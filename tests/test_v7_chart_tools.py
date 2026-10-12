@@ -455,16 +455,29 @@ def test_analysis_response_rejects_unknown_type():
         )
 
 
-def test_analysis_response_rejects_out_of_range_confidence():
-    for value in [-0.1, 1.1]:
-        with pytest.raises(ValidationError):
-            AnalysisResponse.model_validate(
-                {
-                    "answer": "x",
-                    "analysis_type": "general",
-                    "confidence": value,
-                }
-            )
+def test_analysis_response_clamps_out_of_range_confidence():
+    """
+    Out-of-range confidence is clamped, not rejected.
+
+    LLMs routinely answer 100 when the schema says 0.0-1.0.
+    Rejecting the whole response loses a correct answer over
+    a scaling mistake, so the value is brought into range.
+    """
+
+    for value, expected in [
+        (-0.1, 0.0),
+        (1.1, 1.0),
+        (100, 1.0),
+    ]:
+        response = AnalysisResponse.model_validate(
+            {
+                "answer": "x",
+                "analysis_type": "general",
+                "confidence": value,
+            }
+        )
+
+        assert response.confidence == expected
 
 
 def test_analysis_response_has_no_topic_or_difficulty():

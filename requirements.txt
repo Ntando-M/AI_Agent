@@ -1,12 +1,15 @@
 langchain
-wikipedia
 langchain-community
-langchain-openai
-langchain-anthropic
 langchain_groq
 langchain_core
 langchain-chroma
 langchain-ollama
+
+# API layer
+fastapi
+uvicorn
+httpx
+
 python-dotenv
 pydantic
 groq
@@ -15,5 +18,6 @@ pandas
 openpyxl
 matplotlib
 pypdf
+python-docx
 chromadb
 pytest
