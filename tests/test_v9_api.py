@@ -664,6 +664,78 @@ def test_uploaded_dataset_appears_in_the_list(
     assert "extra.csv" in names
 
 
+def test_listed_dataset_reports_its_row_count(
+    client,
+    tmp_path,
+):
+    """
+    The row count used to be hardcoded None in the listing
+    while register() computed it correctly, so a dataset
+    showed its shape on upload and lost it on the next
+    refresh. The listing must report the same shape the
+    upload did.
+    """
+
+    source = tmp_path / "shaped.csv"
+
+    pd.DataFrame(
+        {
+            "Product": ["A", "B", "C"],
+            "Revenue": [10, 20, 30],
+        }
+    ).to_csv(source, index=False)
+
+    with source.open("rb") as handle:
+        uploaded = client.post(
+            "/datasets",
+            headers=AUTH,
+            files={
+                "file": (
+                    "shaped.csv",
+                    handle,
+                    "text/csv",
+                )
+            },
+        ).json()
+
+    listed = next(
+        dataset
+        for dataset in client.get(
+            "/datasets", headers=AUTH
+        ).json()["datasets"]
+        if dataset["name"] == "shaped.csv"
+    )
+
+    assert listed["rows"] == 3
+    assert listed["columns"] == ["Product", "Revenue"]
+
+    # The upload and the listing must not disagree.
+    assert listed["rows"] == uploaded["rows"]
+    assert listed["columns"] == uploaded["columns"]
+
+
+def test_unreadable_dataset_is_still_listed(tmp_path):
+    """
+    A file that cannot be parsed must not hide the rest of
+    the directory. It is listed with an unknown shape.
+    """
+
+    registry = DatasetRegistry(
+        upload_directory=tmp_path / "uploads"
+    )
+
+    (tmp_path / "uploads" / "broken.csv").write_text(
+        "not,a\nvalid\ncsv,at,all,extra,cols",
+        encoding="utf-8",
+    )
+
+    listed = registry.list_datasets()
+
+    names = [entry["name"] for entry in listed]
+
+    assert "broken.csv" in names
+
+
 # ========================================================
 # DOCUMENTS
 # ========================================================
@@ -821,6 +893,215 @@ def test_document_is_indexed_when_a_store_exists(
 
 
 # ========================================================
+# DELETING UPLOADS
+# ========================================================
+
+
+def test_deleted_document_disappears_from_the_list(
+    client,
+    tmp_path,
+):
+    source = tmp_path / "notes.txt"
+    source.write_text("Revenue fell in Q3.")
+
+    with source.open("rb") as handle:
+        client.post(
+            "/documents",
+            headers=AUTH,
+            files={
+                "file": ("notes.txt", handle, "text/plain")
+            },
+        )
+
+    response = client.delete(
+        "/documents/notes.txt", headers=AUTH
+    )
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] is True
+
+    listed = client.get(
+        "/documents", headers=AUTH
+    ).json()["documents"]
+
+    assert "notes.txt" not in listed
+
+
+def test_deleting_a_missing_document_is_404(client):
+    response = client.delete(
+        "/documents/ghost.txt", headers=AUTH
+    )
+
+    assert response.status_code == 404
+
+
+def test_upload_delete_requires_a_key(client):
+    assert (
+        client.delete("/documents/notes.txt").status_code
+        == 401
+    )
+    assert (
+        client.delete("/datasets/notes.csv").status_code
+        == 401
+    )
+
+
+def test_document_delete_removes_its_indexed_chunks(
+    tmp_path,
+):
+    """
+    The file and its embeddings must go together. Leaving the
+    chunks behind would let the engine keep citing a document
+    that no longer exists.
+    """
+
+    class FakeCollection:
+        def __init__(self):
+            self.rows = [
+                {
+                    "id": "a",
+                    "metadata": {"filename": "notes.txt"},
+                },
+                {
+                    "id": "b",
+                    "metadata": {"filename": "notes.txt"},
+                },
+                {
+                    "id": "c",
+                    "metadata": {"filename": "other.txt"},
+                },
+            ]
+            self.deleted: list[str] = []
+
+        def get(self, where=None):
+            name = (where or {}).get("filename")
+
+            return {
+                "ids": [
+                    row["id"]
+                    for row in self.rows
+                    if row["metadata"].get("filename")
+                    == name
+                ]
+            }
+
+        def delete(self, ids=None):
+            self.deleted.extend(ids or [])
+
+    class FakeVectorStore:
+        def __init__(self):
+            self._collection = FakeCollection()
+
+    store = FakeVectorStore()
+
+    registry = DocumentRegistry(
+        directory=tmp_path / "docs",
+        vector_store=store,
+    )
+
+    source = tmp_path / "notes.txt"
+    source.write_text("Revenue fell in Q3.")
+
+    registry.store(
+        source,
+        "notes.txt",
+        source.stat().st_size,
+    )
+
+    deleted, chunks_removed = registry.delete("notes.txt")
+
+    assert deleted is True
+    assert chunks_removed == 2
+    assert sorted(store._collection.deleted) == ["a", "b"]
+
+    # The other document's chunks are untouched.
+    assert "c" not in store._collection.deleted
+
+
+def test_document_delete_survives_a_missing_vector_store(
+    tmp_path,
+):
+    """
+    With no index configured there is nothing to remove from
+    it, so the file delete must still succeed.
+    """
+
+    registry = DocumentRegistry(
+        directory=tmp_path / "docs",
+        vector_store=None,
+    )
+
+    source = tmp_path / "notes.txt"
+    source.write_text("Revenue fell in Q3.")
+
+    registry.store(
+        source,
+        "notes.txt",
+        source.stat().st_size,
+    )
+
+    deleted, chunks_removed = registry.delete("notes.txt")
+
+    assert deleted is True
+    assert chunks_removed == 0
+
+
+def test_dataset_delete_cannot_escape_the_upload_directory(
+    tmp_path,
+):
+    """
+    A traversal in the name must not delete a file outside the
+    upload directory.
+    """
+
+    outside = tmp_path / "important.csv"
+    outside.write_text("Product,Revenue\nA,1\n")
+
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+
+    registry = DatasetRegistry(
+        upload_directory=uploads
+    )
+
+    assert registry.delete("../important.csv") is False
+    assert outside.exists()
+
+
+def test_deleted_dataset_disappears_from_the_list(
+    tmp_path,
+):
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+
+    registry = DatasetRegistry(
+        upload_directory=uploads
+    )
+
+    source = tmp_path / "sales.csv"
+    source.write_text("Product,Revenue\nA,1\n")
+
+    registry.register_from_upload(source, "sales.csv")
+
+    assert [
+        entry["name"]
+        for entry in registry.list_datasets()
+    ] == ["sales.csv"]
+
+    assert registry.delete("sales.csv") is True
+
+    assert registry.list_datasets() == []
+
+
+def test_deleting_a_missing_dataset_is_false(tmp_path):
+    registry = DatasetRegistry(
+        upload_directory=tmp_path / "uploads"
+    )
+
+    assert registry.delete("ghost.csv") is False
+
+
+# ========================================================
 # REPORTS
 # ========================================================
 
@@ -834,8 +1115,12 @@ def test_unknown_report_is_404(client):
     assert response.status_code == 404
 
 
-def test_report_is_addressable_by_id():
-    store = ReportStore()
+def test_report_is_addressable_by_id(tmp_path):
+    # An explicit directory per test. The store is
+    # directory-backed, so a bare ReportStore() would share
+    # the production reports/ directory and leak state
+    # between tests.
+    store = ReportStore(directory=tmp_path / "reports")
 
     report_id = store.save("s1", "the report")
 
@@ -844,8 +1129,8 @@ def test_report_is_addressable_by_id():
     )
 
 
-def test_reports_are_listed_per_session():
-    store = ReportStore()
+def test_reports_are_listed_per_session(tmp_path):
+    store = ReportStore(directory=tmp_path / "reports")
 
     first = store.save("s1", "one")
     store.save("s2", "two")
@@ -856,8 +1141,10 @@ def test_reports_are_listed_per_session():
     assert reports[0]["report_id"] == first
 
 
-def test_unknown_report_returns_none():
-    assert ReportStore().get("nope") is None
+def test_unknown_report_returns_none(tmp_path):
+    store = ReportStore(directory=tmp_path / "reports")
+
+    assert store.get("nope") is None
 
 
 # ========================================================

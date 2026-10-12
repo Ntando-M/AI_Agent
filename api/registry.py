@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import shutil
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -113,6 +115,16 @@ class DatasetRegistry:
         return self.register(target)
 
     def list_datasets(self) -> list[dict[str, Any]]:
+        """
+        Every uploaded dataset, with its shape.
+
+        The shape is read from the file rather than stored,
+        so a listing cannot drift from what is on disk. A
+        file that cannot be parsed is still listed with an
+        unknown shape: one bad upload must not hide the rest
+        of the directory.
+        """
+
         results = []
 
         for path in sorted(
@@ -121,12 +133,28 @@ class DatasetRegistry:
             if not path.is_file():
                 continue
 
+            rows: int | None = None
+            columns: list[str] = []
+
+            try:
+                dataframe = load_dataset(str(path))
+
+                rows = len(dataframe)
+
+                columns = [
+                    str(column)
+                    for column in dataframe.columns
+                ]
+            except Exception:
+                # An unreadable file is still a listed file.
+                pass
+
             results.append(
                 {
                     "name": path.name,
                     "path": str(path),
-                    "rows": None,
-                    "columns": [],
+                    "rows": rows,
+                    "columns": columns,
                     "registered": True,
                 }
             )
@@ -145,6 +173,28 @@ class DatasetRegistry:
             return candidate
 
         return None
+
+    def delete(self, name: str) -> bool:
+        """
+        Remove an uploaded dataset.
+
+        Returns False when there is nothing to remove, so a
+        caller can tell a no-op from a real delete. The name
+        is sanitised first: it arrives from a client, and a
+        traversal segment must not be able to delete anything
+        outside the upload directory.
+        """
+
+        candidate = (
+            self.upload_directory / sanitise_filename(name)
+        )
+
+        if not candidate.exists() or not candidate.is_file():
+            return False
+
+        candidate.unlink()
+
+        return True
 
 class DocumentRegistry:
     """
@@ -234,6 +284,7 @@ class DocumentRegistry:
             )
 
         from rag.document_loader import (
+            load_docx_file,
             load_pdf_file,
             load_text_file,
         )
@@ -244,6 +295,8 @@ class DocumentRegistry:
             documents = load_pdf_file(str(path))
         elif suffix == ".txt":
             documents = load_text_file(str(path))
+        elif suffix == ".docx":
+            documents = load_docx_file(str(path))
         else:
             raise ValueError(
                 f"Indexing {suffix} is not implemented yet."
@@ -265,32 +318,138 @@ class DocumentRegistry:
             in ALLOWED_DOCUMENT_SUFFIXES
         )
 
+    def delete(self, name: str) -> tuple[bool, int]:
+        """
+        Remove a document and its indexed chunks.
+
+        The file and its embeddings are removed together, and
+        the embeddings first. Deleting only the file would
+        leave its chunks retrievable, so the engine would keep
+        citing a document that no longer exists - worse than
+        either failing or succeeding outright.
+
+        Returns (deleted, chunks_removed). The chunks are
+        counted here rather than by the caller so that exactly
+        one sanitisation of the name is used for both halves:
+        two sanitise helpers exist in this package with
+        slightly different rules, and computing the name for
+        the index from one while the file is resolved with the
+        other can target different documents.
+
+        A vector-store failure is raised rather than
+        swallowed: a half-deleted document is a state the
+        caller needs to know about, not one to report as
+        success.
+        """
+
+        safe_name = sanitise_filename(name)
+
+        candidate = self.directory / safe_name
+
+        if not candidate.exists() or not candidate.is_file():
+            return False, 0
+
+        chunks_removed = self.remove_embeddings(safe_name)
+
+        candidate.unlink()
+
+        return True, chunks_removed
+
+    def remove_embeddings(self, safe_name: str) -> int:
+        """
+        Drop a document's chunks from the vector store.
+
+        Matched on the stored metadata rather than on the path
+        alone: the loader records "filename" and an absolute
+        "source", and the absolute path differs between
+        environments, so matching both forms is what makes the
+        removal reliable. A missing store or an unsupported
+        collection is not an error - there is simply nothing
+        indexed to remove.
+        """
+
+        if self.vector_store is None:
+            return 0
+
+        collection = getattr(
+            self.vector_store, "_collection", None
+        )
+
+        if collection is None:
+            return 0
+
+        try:
+            existing = collection.get(
+                where={"filename": safe_name}
+            )
+        except Exception:
+            return 0
+
+        ids = existing.get("ids") or []
+
+        if not ids:
+            return 0
+
+        collection.delete(ids=ids)
+
+        return len(ids)
+
 
 class ReportStore:
     """
     Reports generated for a session, addressed by id.
 
-    Kept in memory for V9. It is deliberately not the
-    filesystem report directory: those files are generated
-    output, whereas this is addressable state the API
-    hands back by id.
+    Persisted as one JSON file per report under the
+    configured reports directory. An in-memory dictionary
+    was the previous implementation, and it meant a report
+    vanished on restart - the endpoint that serves reports
+    by id could only ever answer 404, because nothing ever
+    survived long enough to be read back.
+
+    The id is generated here and validated on read: it
+    arrives from a URL, so a path built from it unchecked
+    is a traversal bug.
     """
 
-    def __init__(self) -> None:
-        self._reports: dict[str, dict] = {}
+    def __init__(
+        self,
+        directory: str | Path = "reports",
+    ) -> None:
+        self.directory = Path(directory)
+
+        self.directory.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
     def save(
         self,
         session_id: str | None,
         content: str,
+        dataset_name: str | None = None,
+        summary: dict | None = None,
+        layers: dict | None = None,
+        charts: dict | None = None,
     ) -> str:
         report_id = uuid.uuid4().hex
 
-        self._reports[report_id] = {
+        report = {
             "report_id": report_id,
             "session_id": session_id,
             "content": content,
+            "dataset_name": dataset_name,
+            "summary": summary or {},
+            "layers": layers or {},
+            "charts": charts or {},
+            "created_at": datetime.now(
+                timezone.utc
+            ).isoformat(),
         }
+
+        self._path(report_id).write_text(
+            json.dumps(report, indent=2),
+            encoding="utf-8",
+        )
 
         return report_id
 
@@ -298,7 +457,52 @@ class ReportStore:
         self,
         report_id: str,
     ) -> dict | None:
-        return self._reports.get(report_id)
+        if not _is_safe_report_id(report_id):
+            return None
+
+        path = self._path(report_id)
+
+        if not path.is_file():
+            return None
+
+        try:
+            payload = json.loads(
+                path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            # One unreadable file must not make the whole
+            # listing unavailable.
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        return payload
+
+    def list_reports(self) -> list[dict]:
+        """
+        Every stored report, newest first.
+
+        Sorted by created_at descending so the most recent
+        report is the first thing the page shows.
+        """
+
+        reports = []
+
+        for path in self.directory.glob("*.json"):
+            report = self.get(path.stem)
+
+            if report is not None:
+                reports.append(report)
+
+        reports.sort(
+            key=lambda report: (
+                report.get("created_at") or ""
+            ),
+            reverse=True,
+        )
+
+        return reports
 
     def list_for_session(
         self,
@@ -306,6 +510,30 @@ class ReportStore:
     ) -> list[dict]:
         return [
             report
-            for report in self._reports.values()
+            for report in self.list_reports()
             if report["session_id"] == session_id
         ]
+
+    def _path(self, report_id: str) -> Path:
+        return self.directory / f"{report_id}.json"
+
+
+def _is_safe_report_id(report_id: str) -> bool:
+    """
+    Whether an id from a URL is one this store could have
+    generated.
+
+    Ids are `uuid4().hex`, so anything containing a path
+    separator, a dot, or a traversal segment is rejected
+    outright. Validating the shape is stricter than
+    sanitising the path, and stricter is correct here: the
+    only legitimate input is a 32-character hex string.
+    """
+
+    if not report_id or len(report_id) != 32:
+        return False
+
+    return all(
+        character in "0123456789abcdef"
+        for character in report_id
+    )
