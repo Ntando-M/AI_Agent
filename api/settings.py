@@ -53,7 +53,23 @@ class Settings:
 
     reports_directory: str = "reports"
 
+    # Where generated chart PNGs are written and read
+    # from. It matches DEFAULT_OUTPUT_DIRECTORY in
+    # data_analysis/charts.py, so the charts a report
+    # references are the ones the analysis path wrote.
+    chart_directory: str = "outputs/charts"
+
     version: str = "0.9.0"
+
+    # V10 hardening. Both limits are configurable so a real
+    # deployment can raise them without a code change, and so
+    # a test can set an absurdly small one to exercise the
+    # rejection path cheaply.
+    max_dataset_upload_bytes: int = 10 * 1024 * 1024
+
+    max_document_upload_bytes: int = 10 * 1024 * 1024
+
+    analysis_timeout_seconds: float = 300.0
 
     allowed_origins: tuple[str, ...] = field(
         default_factory=lambda: (
@@ -99,6 +115,27 @@ class Settings:
             ),
             reports_directory=os.getenv(
                 "API_REPORTS_DIR", "reports"
+            ),
+            chart_directory=os.getenv(
+                "API_CHART_DIR", "outputs/charts"
+            ),
+            max_dataset_upload_bytes=int(
+                os.getenv(
+                    "API_MAX_DATASET_UPLOAD_BYTES",
+                    str(10 * 1024 * 1024),
+                )
+            ),
+            max_document_upload_bytes=int(
+                os.getenv(
+                    "API_MAX_DOCUMENT_UPLOAD_BYTES",
+                    str(10 * 1024 * 1024),
+                )
+            ),
+            analysis_timeout_seconds=float(
+                os.getenv(
+                    "API_ANALYSIS_TIMEOUT_SECONDS",
+                    "300",
+                )
             ),
             allowed_origins=tuple(
                 origin.strip()

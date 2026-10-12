@@ -95,6 +95,7 @@ class SessionPayload(BaseModel):
     created_at: str | None = None
     last_activity_at: str | None = None
     preview: str | None = None
+    name: str
 
 
 class CreateSessionRequest(BaseModel):
@@ -103,11 +104,28 @@ class CreateSessionRequest(BaseModel):
         max_length=200,
     )
 
+    name: str | None = Field(
+        default=None,
+        max_length=120,
+    )
+
 
 class TurnPayload(BaseModel):
+    """
+    One stored turn.
+
+    `evidence` is present only on assistant turns recorded
+    after answers began carrying their supporting metadata.
+    It is optional rather than defaulted so a restored turn
+    can be told apart from one that genuinely had no
+    evidence - the client renders the first as answer-only
+    instead of as a finding with zero confidence.
+    """
+
     role: str
     content: str
     created_at: str | None = None
+    evidence: dict[str, Any] | None = None
 
 
 class SessionDetail(BaseModel):
@@ -120,6 +138,21 @@ class SessionDetail(BaseModel):
 class DeleteResponse(BaseModel):
     session_id: str
     deleted: bool
+
+
+class DeleteUploadResponse(BaseModel):
+    """
+    The result of deleting an upload.
+
+    `name` rather than `session_id`, and `chunks_removed` so
+    a document delete reports how much of the index went with
+    it - the file and the vectors are removed together, and
+    the caller should be able to see both halves happened.
+    """
+
+    name: str
+    deleted: bool
+    chunks_removed: int = 0
 
 
 class AnalyseRequest(BaseModel):
@@ -189,10 +222,65 @@ class DocumentListResponse(BaseModel):
     )
 
 
+class GenerateReportRequest(BaseModel):
+    """
+    A request to generate a report for the loaded dataset.
+
+    `session_id` is optional: a report can be generated
+    without being attached to a conversation, and the
+    reports page lists both.
+    """
+
+    session_id: str | None = None
+
+
 class ReportPayload(BaseModel):
+    """
+    One generated report.
+
+    `content` is the plain-text rendering and remains the
+    canonical artefact. The structured fields are additive:
+    they let the client render the four evidence layers as
+    distinct sections instead of re-parsing the text, and
+    `chart_images` carries each chart as a data URL so the
+    browser can display it through the JSON proxy, which
+    cannot carry PNG bytes.
+    """
+
     report_id: str
     session_id: str | None = None
     content: str
+
+    created_at: str | None = None
+    dataset_name: str | None = None
+
+    summary: dict[str, Any] = Field(
+        default_factory=dict
+    )
+
+    layers: dict[str, list[str]] = Field(
+        default_factory=dict
+    )
+
+    # Chart name -> path on disk.
+    charts: dict[str, str] = Field(
+        default_factory=dict
+    )
+
+    # Chart name -> "data:image/png;base64,...".
+    chart_images: dict[str, str] = Field(
+        default_factory=dict
+    )
+
+
+class ReportSummaryPayload(BaseModel):
+    """A report as it appears in the list."""
+
+    report_id: str
+    session_id: str | None = None
+    dataset_name: str | None = None
+    created_at: str | None = None
+    preview: str = ""
 
 
 class HealthResponse(BaseModel):

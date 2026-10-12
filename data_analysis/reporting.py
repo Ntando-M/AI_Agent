@@ -358,6 +358,49 @@ def generate_sales_report(
     }
 
 
+def build_report_document(
+    dataframe: pd.DataFrame,
+    dataset_name: str | None = None,
+    report_directory: str | Path = (
+        DEFAULT_REPORT_DIRECTORY
+    ),
+    chart_directory: str | Path = "outputs/charts",
+) -> dict[str, Any]:
+    """
+    Assemble one complete, persistable report document.
+
+    Wraps the existing summary, layer and chart builders
+    rather than duplicating them, so a report served over
+    the API and a report written by the CLI are produced by
+    the same deterministic code.
+
+    `content` is the human-readable text rendering, kept so
+    a report is still readable as plain text and so the
+    existing text format stays the canonical artefact.
+    """
+
+    report = generate_sales_report(
+        dataframe,
+        report_directory=report_directory,
+        chart_directory=chart_directory,
+    )
+
+    content = save_report_summary(
+        report,
+        Path(report_directory) / "latest_report.txt",
+    )
+
+    return {
+        "content": Path(content).read_text(
+            encoding="utf-8"
+        ),
+        "dataset_name": dataset_name,
+        "summary": report["summary"],
+        "layers": report["layers"],
+        "charts": report["charts"],
+    }
+
+
 def save_report_summary(
     report: dict[str, Any],
     output_path: str | Path = (

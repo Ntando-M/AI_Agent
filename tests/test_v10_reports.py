@@ -111,3 +111,99 @@ def test_a_default_store_does_not_share_state(tmp_path):
 
     assert first.list_reports()
     assert second.list_reports() == []
+
+
+def test_generate_report_document_layers_and_charts(tmp_path):
+    """
+    The document carries all four evidence layers and a
+    path per chart. The layers are the roadmap's reporting
+    requirement, so losing them here would silently reduce
+    the report to a summary table.
+    """
+
+    import pandas as pd
+
+    from data_analysis.reporting import (
+        build_report_document,
+    )
+
+    dataframe = pd.DataFrame(
+        {
+            "Date": ["2026-01-01", "2026-02-01"],
+            "Product": ["Laptop", "Keyboard"],
+            "Region": ["Gauteng", "Western Cape"],
+            "Units": [2, 5],
+            "Revenue": [100000, 25000],
+        }
+    )
+
+    document = build_report_document(
+        dataframe,
+        dataset_name="sample.csv",
+        report_directory=tmp_path / "reports",
+        chart_directory=tmp_path / "charts",
+    )
+
+    assert document["dataset_name"] == "sample.csv"
+    assert set(document["layers"]) == {
+        "facts",
+        "calculated_findings",
+        "interpretations",
+        "recommendations",
+    }
+    assert document["layers"]["facts"]
+    assert document["charts"]
+    assert "FACTS" in document["content"]
+
+
+def test_chart_data_url_is_produced_for_a_real_png(tmp_path):
+    """
+    The client cannot reach chart files: its only route is
+    the gateway, whose proxy forwards JSON and text, not
+    PNG bytes. So the image has to travel inside the JSON.
+    """
+
+    import base64
+
+    from api.app import _chart_data_url
+
+    charts = tmp_path / "charts"
+    charts.mkdir()
+
+    # A 1x1 PNG, so the test does not depend on matplotlib.
+    png = charts / "chart.png"
+    png.write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+            "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJ"
+            "RU5ErkJggg=="
+        )
+    )
+
+    data_url = _chart_data_url(
+        str(png), str(charts)
+    )
+
+    assert data_url is not None
+    assert data_url.startswith("data:image/png;base64,")
+
+
+def test_chart_outside_the_directory_is_refused(tmp_path):
+    """
+    A stored report is data on disk and could have been
+    edited. Its chart paths must not be able to read
+    arbitrary files.
+    """
+
+    from api.app import _chart_data_url
+
+    charts = tmp_path / "charts"
+    charts.mkdir()
+
+    secret = tmp_path / "secret.txt"
+    secret.write_text("private", encoding="utf-8")
+
+    assert (
+        _chart_data_url(str(secret), str(charts))
+        is None
+    )
