@@ -6,6 +6,7 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 from memory.sqlite_store import (
+    DEFAULT_SESSION_NAME,
     ConversationStore,
     SQLiteConversationStore,
     decode_message,
@@ -200,6 +201,216 @@ def test_create_on_empty_store_adds_no_message(store):
     store.create_session("fresh")
 
     assert store.get_turns("fresh") == []
+
+
+# ========================================================
+# CONVERSATION NAMES
+# ========================================================
+
+
+def test_unnamed_session_gets_a_default_name(store):
+    """
+    A conversation created without a name must still show
+    something readable. A raw id such as "web-lz4k2p" is not
+    a label a reader should have to parse.
+    """
+
+    summary = store.create_session("fresh")
+
+    assert summary.as_dict()["name"] == DEFAULT_SESSION_NAME
+
+
+def test_named_session_keeps_its_name(store):
+    summary = store.create_session(
+        "fresh",
+        name="Q3 revenue review",
+    )
+
+    assert summary.as_dict()["name"] == "Q3 revenue review"
+
+    listed = {
+        entry.session_id: entry.as_dict()["name"]
+        for entry in store.list_sessions()
+    }
+
+    assert listed["fresh"] == "Q3 revenue review"
+
+
+def test_renaming_an_existing_session(store):
+    """
+    The rename path. A named create of a session that
+    already exists applies the new name - that is what makes
+    the one endpoint serve both create and rename.
+    """
+
+    store.create_session("s1", name="First name")
+
+    renamed = store.create_session("s1", name="Second name")
+
+    assert renamed.as_dict()["name"] == "Second name"
+
+    listed = {
+        entry.session_id: entry.as_dict()["name"]
+        for entry in store.list_sessions()
+    }
+
+    assert listed["s1"] == "Second name"
+
+
+def test_renaming_preserves_the_conversation(store):
+    """
+    A rename must never touch history. Losing messages to a
+    rename would be far worse than a stale name.
+    """
+
+    store.create_session("s1", name="Before")
+    store.add_turn("s1", "q", "a")
+
+    store.create_session("s1", name="After")
+
+    turns = store.get_turns("s1")
+
+    assert len(turns) == 2
+    assert turns[0].content == "q"
+    assert turns[1].content == "a"
+
+
+def test_renaming_an_unnamed_session(store):
+    """A conversation using the default label can be named."""
+
+    store.create_session("s1")
+
+    assert (
+        store.create_session("s1").as_dict()["name"]
+        == DEFAULT_SESSION_NAME
+    )
+
+    renamed = store.create_session(
+        "s1", name="Now named"
+    )
+
+    assert renamed.as_dict()["name"] == "Now named"
+
+
+def test_unnamed_recreate_leaves_the_name_alone(store):
+    """
+    A blank or absent name must not clear a stored name.
+
+    The rename dialog sends null when its field is empty, so
+    if that cleared the name a cancelled-looking edit would
+    silently rename the conversation to the default label.
+    """
+
+    store.create_session("s1", name="Kept")
+
+    store.create_session("s1")
+
+    assert (
+        store.create_session("s1").as_dict()["name"]
+        == "Kept"
+    )
+
+
+def test_rename_trims_whitespace(store):
+    store.create_session("s1", name="Original")
+
+    renamed = store.create_session(
+        "s1", name="   Padded name   "
+    )
+
+    assert renamed.as_dict()["name"] == "Padded name"
+
+
+def test_name_is_trimmed(store):
+    summary = store.create_session(
+        "fresh",
+        name="  Sales by region  ",
+    )
+
+    assert summary.as_dict()["name"] == "Sales by region"
+
+
+def test_whitespace_name_counts_as_unnamed(store):
+    summary = store.create_session(
+        "fresh",
+        name="   ",
+    )
+
+    assert summary.as_dict()["name"] == DEFAULT_SESSION_NAME
+
+
+def test_creating_an_existing_session_can_rename_it(store):
+    store.create_session("fresh")
+
+    summary = store.create_session(
+        "fresh",
+        name="Renamed later",
+    )
+
+    assert summary.as_dict()["name"] == "Renamed later"
+
+
+def test_recreating_without_a_name_preserves_the_stored_name(
+    store,
+):
+    """
+    Re-creating a session is how a chat is auto-created on
+    first use, so an unnamed re-create must not wipe a name
+    the user already chose.
+    """
+
+    store.create_session("fresh", name="Kept")
+
+    summary = store.create_session("fresh")
+
+    assert summary.as_dict()["name"] == "Kept"
+
+
+def test_default_name_survives_a_nameless_catalog(tmp_path):
+    """
+    A database written before names existed has no name
+    column. The store must add it in place and still list
+    every session.
+    """
+
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE conversation_session ("
+        "session_id TEXT PRIMARY KEY, created_at TEXT)"
+    )
+    connection.execute(
+        "INSERT INTO conversation_session "
+        "VALUES ('legacy', '2026-01-01T00:00:00+00:00')"
+    )
+    connection.commit()
+    connection.close()
+
+    store = SQLiteConversationStore(
+        database_url=(
+            "sqlite:///"
+            + str(path).replace("\\", "/")
+        )
+    )
+
+    listed = {
+        entry.session_id: entry.as_dict()["name"]
+        for entry in store.list_sessions()
+    }
+
+    assert listed["legacy"] == DEFAULT_SESSION_NAME
+
+    columns = {
+        row[1]
+        for row in sqlite3.connect(path).execute(
+            "PRAGMA table_info(conversation_session)"
+        )
+    }
+
+    assert "name" in columns
 
 
 def test_created_empty_session_is_listed(store):
@@ -497,6 +708,194 @@ def test_turn_serialises(store):
 
     assert payload["role"] == "user"
     assert payload["content"] == "q"
+
+
+# ========================================================
+# EVIDENCE
+# ========================================================
+
+
+def test_evidence_round_trips_on_the_answer(store):
+    """
+    The reason evidence is stored at all: a restored turn
+    must show the confidence and sources the live turn
+    showed, and neither is recoverable from the answer text.
+    """
+
+    evidence = {
+        "analysis_type": "document",
+        "confidence": 0.87,
+        "sources": ["strategy.docx"],
+    }
+
+    store.add_turn("s1", "q", "a", evidence=evidence)
+
+    turns = store.get_turns("s1")
+
+    assert turns[0].role == "user"
+    assert turns[0].evidence is None
+
+    assert turns[1].role == "assistant"
+    assert turns[1].evidence == evidence
+
+
+def test_turn_without_evidence_reads_back_as_none(store):
+    """
+    A turn recorded before evidence existed - or by a
+    caller that had none - must read back as None rather
+    than as empty evidence. The two mean different things:
+    "not recorded" versus "recorded and empty", and only the
+    first should render as answer-only.
+    """
+
+    store.add_turn("s1", "q", "a")
+
+    assert store.get_turns("s1")[1].evidence is None
+
+
+def test_evidence_lands_only_on_its_own_turn(store):
+    """
+    Attaching evidence targets the newest assistant row, so
+    an earlier turn's evidence must survive a later turn.
+    """
+
+    store.add_turn(
+        "s1", "q1", "a1", evidence={"confidence": 0.1}
+    )
+    store.add_turn(
+        "s1", "q2", "a2", evidence={"confidence": 0.9}
+    )
+
+    answers = [
+        turn
+        for turn in store.get_turns("s1")
+        if turn.role == "assistant"
+    ]
+
+    assert len(answers) == 2
+    assert answers[0].evidence == {"confidence": 0.1}
+    assert answers[1].evidence == {"confidence": 0.9}
+
+
+def test_evidence_does_not_disturb_message_history(store):
+    """
+    Evidence is attached by a follow-up UPDATE, so the
+    LangChain messages the orchestrator reads back must be
+    untouched by it.
+    """
+
+    store.add_turn(
+        "s1", "q", "a", evidence={"confidence": 0.5}
+    )
+
+    messages = store.get_messages("s1")
+
+    assert [str(m.content) for m in messages] == ["q", "a"]
+
+
+def test_corrupt_evidence_does_not_break_the_conversation(
+    store, tmp_path
+):
+    """
+    One unreadable evidence value must not make the whole
+    conversation unreadable - the same rule decode_message
+    follows for messages.
+    """
+
+    from sqlalchemy import text
+
+    store.add_turn("s1", "q", "a")
+
+    with store.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE message_store SET evidence = "
+                "'{not valid json' WHERE session_id = 's1'"
+            )
+        )
+
+    turns = store.get_turns("s1")
+
+    assert len(turns) == 2
+    assert turns[1].content == "a"
+    assert turns[1].evidence is None
+
+
+def test_evidence_column_is_added_to_an_existing_table(
+    tmp_path,
+):
+    """
+    The additive migration. A chat_history.db written before
+    evidence existed has a three-column message_store, and
+    opening it must widen the table without losing a row -
+    that file holds real conversations.
+    """
+
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+
+    connection = sqlite3.connect(path)
+
+    connection.execute(
+        "CREATE TABLE message_store ("
+        "id INTEGER PRIMARY KEY, "
+        "session_id TEXT, "
+        "message TEXT)"
+    )
+
+    connection.execute(
+        "INSERT INTO message_store (session_id, message) "
+        "VALUES ('old', ?)",
+        (json.dumps({"type": "ai", "data": {"content": "hi"}}),),
+    )
+
+    connection.commit()
+    connection.close()
+
+    store = SQLiteConversationStore(
+        database_url=(
+            "sqlite:///" + str(path).replace("\\", "/")
+        )
+    )
+
+    columns = {
+        row[1]
+        for row in sqlite3.connect(path).execute(
+            "PRAGMA table_info(message_store)"
+        )
+    }
+
+    assert "evidence" in columns
+
+    turns = store.get_turns("old")
+
+    assert len(turns) == 1
+    assert turns[0].content == "hi"
+    assert turns[0].evidence is None
+
+
+def test_reopening_the_store_is_idempotent(tmp_path):
+    """
+    The migration runs on every construction, so opening the
+    same file repeatedly must not fail on an existing column.
+    """
+
+    url = (
+        "sqlite:///"
+        + str(tmp_path / "twice.db").replace("\\", "/")
+    )
+
+    SQLiteConversationStore(database_url=url)
+    second = SQLiteConversationStore(database_url=url)
+
+    second.add_turn(
+        "s1", "q", "a", evidence={"confidence": 1.0}
+    )
+
+    assert second.get_turns("s1")[1].evidence == {
+        "confidence": 1.0
+    }
 
 
 # ========================================================

@@ -192,6 +192,25 @@ def display_session(
         else:
             print(f"AI: {turn.content}")
 
+            # Parity with the web client: a stored answer
+            # shows the evidence it was given, when it was
+            # recorded with any. An older turn has none and
+            # prints as text alone rather than with a
+            # confidence the engine never reported.
+            if turn.evidence:
+                print(
+                    "    ["
+                    f"{turn.evidence.get('analysis_type', '')}"
+                    " | confidence "
+                    f"{turn.evidence.get('confidence', 0)}"
+                    "]"
+                )
+
+                for source in turn.evidence.get(
+                    "sources", []
+                ):
+                    print(f"    source: {source}")
+
     print()
 
 
