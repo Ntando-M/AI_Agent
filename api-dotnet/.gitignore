@@ -1,0 +1,18 @@
+## Build output
+bin/
+obj/
+
+## User-specific and secret-bearing files
+*.user
+*.suo
+appsettings.Local.json
+appsettings.*.Local.json
+
+## The shared key must never be committed. It is supplied through
+## user secrets or the environment; see README.md.
+secrets.json
+
+## IDE
+.vs/
+.idea/
+*.swp
