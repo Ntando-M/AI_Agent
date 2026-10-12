@@ -1,8 +1,15 @@
 # Environment variables
+#
+# .env holds real keys and must never be committed. .env.example
+# is the documented template and contains no secrets, so it IS
+# tracked - the README quick start tells you to copy it.
 .env
-.env.backup
-.env.example
-# Environment variables
+.env.*
+!.env.example
+
+# Any stray copy of a secrets file, whatever it is called.
+*.backup
+secrets.json
 
 venv/
 .venv/
@@ -18,6 +25,11 @@ data/sales.db
 charts/
 outputs/
 reports/
+
+# Datasets uploaded through the API. User data, not source.
+# The directory is created on demand by the API, so it does
+# not need to exist in the repository.
+data/uploads/
 
 chroma_db/*
 !chroma_db/.gitkeep
@@ -40,3 +52,6 @@ bin/
 obj/
 api-dotnet/bin/
 api-dotnet/obj/
+
+# Agent scratch: plans and working notes. Not project source.
+.hermes/
