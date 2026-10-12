@@ -166,3 +166,15 @@ class AnalysisStep(BaseModel):
 
 class AnalysisPlan(BaseModel):
     steps: list[AnalysisStep] = Field(min_length=1)
+
+
+class PlanNotProducedError(ValueError):
+    """
+    The planner returned something that is not a plan.
+
+    Distinct from a generic ValueError so a caller can tell
+    "the model did not plan this question" apart from "the
+    engine broke". Only the former is the caller's to fix by
+    rephrasing, which is what makes it safe to report as a
+    client error rather than a server fault.
+    """

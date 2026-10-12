@@ -10,16 +10,71 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
 )
+from pydantic import ValidationError
 
 from data_analysis import load_dataset
 from data_analysis.sql_agent import SQLAnalysisAgent
-from data_analysis.tool_models import AnalysisPlan
+from data_analysis.tool_models import (
+    AnalysisPlan,
+    PlanNotProducedError,
+)
 from data_analysis.tool_registry import (
     get_dataframe_tool_registry,
     get_sql_tool_registry,
     get_tool_registry,
     get_tool_data_source,
 )
+
+
+def strip_code_fences(text):
+    """
+    Remove a markdown code fence wrapping a JSON payload.
+
+    Models often answer with a fenced block even when told to
+    return only JSON, producing:
+
+        ```json
+        {"steps": [...]}
+        ```
+
+    This is duplicated from llm/groq_provider.py on purpose.
+    The engine must not import a provider module - that
+    separation is what keeps routing independent of which model
+    is running - so the shared behaviour is restated here
+    rather than imported across the boundary. The provider
+    strips fences for its own callers; the agent strips them
+    again because a plan may arrive from any provider.
+    """
+
+    if not text:
+        return text
+
+    stripped = text.strip()
+
+    if not stripped.startswith("```"):
+        return stripped
+
+    remainder = stripped[3:]
+
+    if "\n" in remainder:
+        first_line, remainder = remainder.split(
+            "\n", 1
+        )
+
+        if first_line.strip() == "":
+            stripped = remainder
+        elif first_line.strip().lower() in {
+            "json",
+            "javascript",
+            "js",
+            "python",
+        }:
+            stripped = remainder
+
+    if stripped.rstrip().endswith("```"):
+        stripped = stripped.rstrip()[:-3]
+
+    return stripped.strip()
 
 
 class DataAnalysisAgent:
@@ -181,6 +236,16 @@ class DataAnalysisAgent:
                 }
             )
 
+            # A filter that matches nothing empties the frame.
+            # That is a legitimate "no data" answer, not an error,
+            # so stop here and let the empty result speak for itself
+            # rather than passing an empty frame to the next step.
+            if (
+                step.tool == "filter_dataset"
+                and working_dataframe.empty
+            ):
+                break
+
         return results
 
     def parse_plan(
@@ -190,16 +255,23 @@ class DataAnalysisAgent:
         """
         Validate a planner response into an AnalysisPlan.
 
-        Small local models often return the step list
-        directly rather than wrapping it in {"steps": ...}.
-        That is unambiguous, so it is accepted and
-        normalised instead of failing the turn. Anything
-        genuinely ambiguous is rejected.
+        Three shapes are accepted, because models differ in
+        how literally they follow "return only JSON":
+
+        * {"steps": [...]} - the requested shape
+        * [...]             - the bare list, unambiguous
+        * ```json fenced``` - markdown wrapping the above
+
+        Anything genuinely ambiguous is rejected rather than
+        guessed at, because a wrong plan executes the wrong
+        tools against the user's data.
         """
 
         if isinstance(raw_plan, str):
+            candidate = strip_code_fences(raw_plan)
+
             try:
-                parsed = json.loads(raw_plan)
+                parsed = json.loads(candidate)
             except json.JSONDecodeError as exc:
                 raise ValueError(
                     "The LLM returned an invalid JSON "
@@ -211,7 +283,64 @@ class DataAnalysisAgent:
         if isinstance(parsed, list):
             parsed = {"steps": parsed}
 
+        # A model that cannot plan sometimes answers with a
+        # conversational payload instead - observed in
+        # practice: {"error": "I'm sorry, but I couldn't
+        # understand which dataset you're referring to."}.
+        # Passing that to model_validate produced a cryptic
+        # "steps: Field required" 500. A named error tells the
+        # reader what actually happened and what to do.
+        if not isinstance(parsed, dict) or "steps" not in parsed:
+            raise PlanNotProducedError(
+                "The model did not return an analysis plan "
+                "for this question. Try rephrasing it, or ask "
+                "something that can be answered from the "
+                "dataset, the database or the documents."
+            )
+
         return AnalysisPlan.model_validate(parsed)
+
+    def _column_value_summary(self) -> str:
+        """
+        Describe the values present in each column.
+
+        The planner needs the actual labels, not just the column
+        names: without them it invents filter values that match
+        nothing. Categorical columns list their unique values;
+        numeric columns list their range, since enumerating every
+        distinct number would bury the prompt.
+        """
+
+        lines = []
+
+        for column in self.dataframe.columns:
+            series = self.dataframe[column]
+
+            if pd.api.types.is_numeric_dtype(series):
+                lines.append(
+                    f"- {column} (numeric): "
+                    f"min {series.min()}, max {series.max()}"
+                )
+                continue
+
+            values = series.dropna().unique().tolist()
+
+            if len(values) > 20:
+                shown = ", ".join(
+                    str(value) for value in values[:20]
+                )
+                lines.append(
+                    f"- {column} ({len(values)} distinct): "
+                    f"{shown}, ..."
+                )
+                continue
+
+            lines.append(
+                f"- {column}: "
+                f"{', '.join(str(value) for value in values)}"
+            )
+
+        return "\n".join(lines)
 
     def build_planning_prompt(
         self,
@@ -239,6 +368,18 @@ The Python tools perform the actual calculations.
 The dataset columns are:
 
 {list(self.dataframe.columns)}
+
+The values actually present in each column are:
+
+{self._column_value_summary()}
+
+Filter values must be chosen from these lists. Never invent a
+value: asking about "laptops" when the column holds "Laptop"
+matches nothing, and asking for "max" as a product name is not
+a value at all. When a question asks for a superlative such as
+"the best" or "the most", rank the real values with
+group_by_column or sort_dataset rather than filtering on the
+word itself.
 
 An analytical database is{' available' if self.has_database else ' NOT available'}.
 Database tools are listed below only when a database is available.
@@ -270,6 +411,9 @@ Return ONLY valid JSON matching this structure:
 }}
 
 For multi-step questions, use multiple tools in the correct order.
+Prefer the fewest steps that answer the question. A ranking or
+comparison is usually one group_by_column plus one sort_dataset,
+not a filter per category.
 
 User question:
 
@@ -333,7 +477,19 @@ Tool results:
 
 {json.dumps(results, indent=2, default=str)}
 
-Respond with the required structured fields.
+Return ONLY valid JSON matching this structure:
+
+{{
+  "answer": "The complete answer to the user's question, written in clear natural language",
+  "analysis_type": "general | document | dataset | database | visualisation",
+  "datasets_used": ["name of dataset or database table used"],
+  "calculations_performed": ["description of each deterministic calculation or query that was actually executed"],
+  "key_findings": ["the most important findings, each stated as a concrete result supported by the evidence"],
+  "sources": ["documents, filenames or database tables that provided the evidence"],
+  "confidence": 0.0 to 1.0
+}}
+
+Every field is required. Do not add extra fields. Do not wrap the JSON in markdown fences.
 """.strip()
 
     def collect_visualisations(
@@ -378,37 +534,64 @@ Respond with the required structured fields.
         nothing to plan from. Including history lets it
         resolve the reference instead of failing on an
         unplannable question.
+
+        A planner that returns nothing usable is retried once.
+        An empty plan is an intermittent property of this
+        reasoning model rather than a broken question - the
+        same question plans correctly on a second attempt -
+        so one retry rescues the turn instead of failing it.
+        A question that genuinely cannot be planned still
+        raises, because inventing a plan would execute the
+        wrong tools against the user's data.
         """
 
         planning_prompt = self.build_planning_prompt(
             question
         )
 
-        response = planning_llm_function(
-            [
-                SystemMessage(
-                    content=planning_prompt
-                ),
-                *(history or []),
-                HumanMessage(
-                    content=question
-                ),
-            ]
-        )
+        messages = [
+            SystemMessage(
+                content=planning_prompt
+            ),
+            *(history or []),
+            HumanMessage(
+                content=question
+            ),
+        ]
 
-        if isinstance(response, str):
-            raw_plan = response
-        elif isinstance(response, dict):
-            if "answer" in response:
-                raw_plan = response["answer"]
-            elif "content" in response:
-                raw_plan = response["content"]
+        last_error: Exception | None = None
+
+        for attempt in range(2):
+            response = planning_llm_function(messages)
+
+            if isinstance(response, str):
+                raw_plan = response
+            elif isinstance(response, dict):
+                if "answer" in response:
+                    raw_plan = response["answer"]
+                elif "content" in response:
+                    raw_plan = response["content"]
+                else:
+                    raw_plan = json.dumps(response)
             else:
-                raw_plan = json.dumps(response)
-        else:
-            raw_plan = str(response)
+                raw_plan = str(response)
 
-        return self.parse_plan(raw_plan)
+            try:
+                return self.parse_plan(raw_plan)
+            except (ValueError, ValidationError) as exc:
+                last_error = exc
+
+                print(
+                    f"[planner] unusable plan on attempt "
+                    f"{attempt + 1}, retrying: {exc}"
+                )
+
+        raise PlanNotProducedError(
+            "The model did not return a usable analysis plan "
+            "for this question. Try rephrasing it, or ask "
+            "something that can be answered from the dataset, "
+            "the database or the documents."
+        ) from last_error
 
     def analyse(
         self,

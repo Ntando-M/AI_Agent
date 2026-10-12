@@ -21,6 +21,7 @@ from data_analysis.analyzer import (
     filter_dataset,
     group_by_column,
 )
+from data_analysis.agent import DataAnalysisAgent
 
 
 DATASET_PATH = "data/sample.csv"
@@ -134,20 +135,27 @@ class TestEmptyResultIsNotSilentlyZero:
         with pytest.raises(ValueError):
             aggregate_dataset(empty, "Units", operation)
 
-    def test_unknown_value_raises_rather_than_returning_empty(
+    def test_unknown_value_returns_empty_not_raises(
         self,
         sales_dataframe,
     ):
+        """
+        A filter that matches nothing is a legitimate "no data"
+        answer. execute_plan stops at the empty frame rather than
+        passing it to the next step, so aggregate_dataset never
+        sees it. The guard stays for a genuinely empty dataset.
+        """
+        filtered = filter_dataset(
+            sales_dataframe,
+            "Product",
+            "Smartfridge",
+        )
+
+        assert filtered.empty
+
+        # The guard still fires on a frame that was never filtered.
         with pytest.raises(ValueError, match="no rows"):
-            aggregate_dataset(
-                filter_dataset(
-                    sales_dataframe,
-                    "Product",
-                    "Smartfridge",
-                ),
-                "Units",
-                "sum",
-            )
+            aggregate_dataset(filtered, "Units", "sum")
 
     def test_statistics_raises_on_empty_frame(self):
         from data_analysis.analyzer import (
@@ -172,6 +180,81 @@ class TestTheTwoQuestionsAgree:
     deterministic layer: the revenue ranking and the units lookup
     must both put Laptop on the map.
     """
+
+    def test_execute_plan_stops_after_empty_filter(
+        self,
+        sales_dataframe,
+    ):
+        """
+        The regression that broke the API: a plan that filters on
+        an unmatchable value then aggregates must not crash.
+        execute_plan stops at the empty frame.
+        """
+        from data_analysis.tool_models import AnalysisPlan
+
+        agent = DataAnalysisAgent(DATASET_PATH)
+
+        plan = AnalysisPlan.model_validate(
+            {
+                "steps": [
+                    {
+                        "tool": "filter_dataset",
+                        "arguments": {
+                            "column": "Product",
+                            "value": "max",
+                        },
+                    },
+                    {
+                        "tool": "aggregate_dataset",
+                        "arguments": {
+                            "column": "Revenue",
+                            "operation": "max",
+                        },
+                    },
+                ]
+            }
+        )
+
+        results = agent.execute_plan(plan)
+
+        # Only the filter ran; the aggregate was skipped.
+        assert len(results) == 1
+        assert results[0]["tool"] == "filter_dataset"
+        assert results[0]["result"] == []
+
+    def test_execute_plan_runs_all_steps_when_filter_matches(
+        self,
+        sales_dataframe,
+    ):
+        from data_analysis.tool_models import AnalysisPlan
+
+        agent = DataAnalysisAgent(DATASET_PATH)
+
+        plan = AnalysisPlan.model_validate(
+            {
+                "steps": [
+                    {
+                        "tool": "filter_dataset",
+                        "arguments": {
+                            "column": "Product",
+                            "value": "Laptop",
+                        },
+                    },
+                    {
+                        "tool": "aggregate_dataset",
+                        "arguments": {
+                            "column": "Units",
+                            "operation": "sum",
+                        },
+                    },
+                ]
+            }
+        )
+
+        results = agent.execute_plan(plan)
+
+        assert len(results) == 2
+        assert results[1]["result"] == 14.0
 
     def test_best_product_agrees_with_units_lookup(
         self,
