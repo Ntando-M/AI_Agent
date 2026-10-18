@@ -146,16 +146,23 @@ def test_preview_is_truncated(store):
     assert len(summary.preview) == 120
 
 
-def test_list_is_sorted_by_session_id(store):
-    store.add_turn("zebra", "q", "a")
+def test_list_is_sorted_most_recent_first(store):
+    """
+    The conversation list must show the most recently used
+    conversation first, not alphabetically by id.
+    """
+
     store.add_turn("alpha", "q", "a")
+    store.add_turn("zebra", "q", "a")
 
     ids = [
         summary.session_id
         for summary in store.list_sessions()
     ]
 
-    assert ids == ["alpha", "zebra"]
+    # "zebra" was written last, so it is the most recent.
+    # Alphabetically this would be ["alpha", "zebra"].
+    assert ids == ["zebra", "alpha"]
 
 
 # ========================================================

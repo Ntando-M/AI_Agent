@@ -530,9 +530,29 @@ class SQLiteConversationStore(ConversationStore):
             entry["created_at"] = row.created_at
             entry["name"] = row.name
 
+        # Most recent first. Sessions with messages are
+        # ordered by their last message id (higher = more
+        # recent), and sessions without messages fall back to
+        # their creation time. This puts the conversation you
+        # just used at the top of the list.
+        def _recency_key(session_id: str) -> tuple:
+            entry = by_id[session_id]
+            # last_id is the max message id; higher means more
+            # recent. Sessions without messages have last_id=None
+            # and sort to the end.
+            last_id = entry["last_id"] or 0
+            created = entry["created_at"] or ""
+            return (last_id, created)
+
+        ordered_ids = sorted(
+            by_id,
+            key=_recency_key,
+            reverse=True,
+        )
+
         summaries = []
 
-        for session_id in sorted(by_id):
+        for session_id in ordered_ids:
             entry = by_id[session_id]
 
             summaries.append(

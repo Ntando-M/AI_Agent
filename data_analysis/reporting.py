@@ -21,6 +21,28 @@ DEFAULT_REPORT_DIRECTORY = Path(
 )
 
 
+def _find_column(
+    dataframe: pd.DataFrame,
+    candidates: list[str],
+) -> str | None:
+    """
+    Find the first column whose lowercase name matches
+    any candidate (case-insensitive, also matches common
+    synonyms like 'sales' or 'amount' for 'revenue').
+    """
+
+    lowered = {
+        str(col).lower(): str(col)
+        for col in dataframe.columns
+    }
+
+    for candidate in candidates:
+        if candidate.lower() in lowered:
+            return lowered[candidate.lower()]
+
+    return None
+
+
 def build_dataset_summary(
     dataframe: pd.DataFrame,
 ) -> dict[str, Any]:
@@ -44,11 +66,27 @@ def build_dataset_summary(
         ],
     }
 
-    if "Revenue" in dataframe.columns:
+    revenue_col = _find_column(
+        dataframe,
+        [
+            "Revenue",
+            "revenue",
+            "Sales",
+            "sales",
+            "Amount",
+            "amount",
+            "Total",
+            "total",
+            "Income",
+            "income",
+        ],
+    )
+
+    if revenue_col:
         revenue_statistics = (
             calculate_statistics(
                 dataframe,
-                "Revenue",
+                revenue_col,
             )
         )
 
@@ -56,21 +94,32 @@ def build_dataset_summary(
             revenue_statistics
         )
 
-    if {
-        "Product",
-        "Revenue",
-    }.issubset(dataframe.columns):
+    product_col = _find_column(
+        dataframe,
+        [
+            "Product",
+            "product",
+            "Item",
+            "item",
+            "Category",
+            "category",
+            "SKU",
+            "sku",
+        ],
+    )
+
+    if product_col and revenue_col:
         product_revenue = group_by_column(
             dataframe,
-            "Product",
-            "Revenue",
+            product_col,
+            revenue_col,
             "sum",
         )
 
         product_revenue = (
             product_revenue
             .sort_values(
-                "Revenue",
+                revenue_col,
                 ascending=False,
             )
         )
@@ -81,21 +130,34 @@ def build_dataset_summary(
             )
         )
 
-    if {
-        "Region",
-        "Revenue",
-    }.issubset(dataframe.columns):
+    region_col = _find_column(
+        dataframe,
+        [
+            "Region",
+            "region",
+            "Location",
+            "location",
+            "City",
+            "city",
+            "Country",
+            "country",
+            "Store",
+            "store",
+        ],
+    )
+
+    if region_col and revenue_col:
         region_revenue = group_by_column(
             dataframe,
-            "Region",
-            "Revenue",
+            region_col,
+            revenue_col,
             "sum",
         )
 
         region_revenue = (
             region_revenue
             .sort_values(
-                "Revenue",
+                revenue_col,
                 ascending=False,
             )
         )
@@ -105,6 +167,29 @@ def build_dataset_summary(
                 orient="records"
             )
         )
+
+    date_col = _find_column(
+        dataframe,
+        [
+            "Date",
+            "date",
+            "Month",
+            "month",
+            "Year",
+            "year",
+            "Period",
+            "period",
+            "Time",
+            "time",
+        ],
+    )
+
+    summary["_detected_columns"] = {
+        "revenue": revenue_col,
+        "product": product_col,
+        "region": region_col,
+        "date": date_col,
+    }
 
     return summary
 
@@ -165,6 +250,12 @@ def build_finding_layers(
             f"values."
         )
 
+    detected = summary.get("_detected_columns", {})
+    revenue_col = detected.get("revenue")
+    product_col = detected.get("product")
+    region_col = detected.get("region")
+    date_col = detected.get("date")
+
     product_rows = summary.get(
         "revenue_by_product"
     )
@@ -175,9 +266,9 @@ def build_finding_layers(
 
     revenue_sum = None
 
-    if product_rows:
+    if product_rows and revenue_col:
         revenue_sum = sum(
-            row["Revenue"]
+            row[revenue_col]
             for row in product_rows
         )
 
@@ -189,34 +280,35 @@ def build_finding_layers(
     if (
         product_rows
         and revenue_sum
+        and product_col
     ):
         top_product = product_rows[0]
 
         facts.append(
             f"The highest-revenue product is "
-            f"{top_product['Product']} at "
-            f"{_format_currency(top_product['Revenue'])}."
+            f"{top_product[product_col]} at "
+            f"{_format_currency(top_product[revenue_col])}."
         )
 
         share = (
-            top_product["Revenue"] / revenue_sum * 100
+            top_product[revenue_col] / revenue_sum * 100
         )
 
         findings.append(
-            f"{top_product['Product']} accounts for "
+            f"{top_product[product_col]} accounts for "
             f"{_percent(share)} of total revenue."
         )
 
         if share >= 50:
             interpretations.append(
                 f"Revenue appears concentrated in "
-                f"{top_product['Product']}, which alone "
+                f"{top_product[product_col]}, which alone "
                 f"exceeds half of the total."
             )
 
             recommendations.append(
                 f"Review the pipeline feeding "
-                f"{top_product['Product']} - concentration "
+                f"{top_product[product_col]} - concentration "
                 f"of this size makes overall revenue "
                 f"sensitive to that one category."
             )
@@ -224,26 +316,24 @@ def build_finding_layers(
     if (
         region_rows
         and revenue_sum
+        and region_col
     ):
         top_region = region_rows[0]
 
         findings.append(
-            f"{top_region['Region']} generates the most "
+            f"{top_region[region_col]} generates the most "
             f"revenue at "
-            f"{_format_currency(top_region['Revenue'])}."
+            f"{_format_currency(top_region[revenue_col])}."
         )
 
     monthly = None
 
-    if {
-        "Date",
-        "Revenue",
-    }.issubset(dataframe.columns):
+    if date_col and revenue_col:
         monthly = (
             calculate_monthly_revenue(
                 dataframe,
-                "Date",
-                "Revenue",
+                date_col,
+                revenue_col,
             )
             .sort_values("Month")
         )
@@ -508,9 +598,14 @@ def save_report_summary(
 
         lines.append("")
 
+    detected = summary.get("_detected_columns", {})
+    revenue_col = detected.get("revenue", "Revenue")
+    product_col = detected.get("product", "Product")
+    region_col = detected.get("region", "Region")
+
     if "revenue_by_product" in summary:
         lines.append(
-            "REVENUE BY PRODUCT"
+            f"REVENUE BY {product_col.upper()}"
         )
         lines.append(
             "-" * 40
@@ -520,15 +615,15 @@ def save_report_summary(
             "revenue_by_product"
         ]:
             lines.append(
-                f"{row['Product']}: "
-                f"{row['Revenue']}"
+                f"{row[product_col]}: "
+                f"{row[revenue_col]}"
             )
 
         lines.append("")
 
     if "revenue_by_region" in summary:
         lines.append(
-            "REVENUE BY REGION"
+            f"REVENUE BY {region_col.upper()}"
         )
         lines.append(
             "-" * 40
@@ -538,8 +633,8 @@ def save_report_summary(
             "revenue_by_region"
         ]:
             lines.append(
-                f"{row['Region']}: "
-                f"{row['Revenue']}"
+                f"{row[region_col]}: "
+                f"{row[revenue_col]}"
             )
 
         lines.append("")

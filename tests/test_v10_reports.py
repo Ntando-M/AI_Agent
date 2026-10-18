@@ -207,3 +207,103 @@ def test_chart_outside_the_directory_is_refused(tmp_path):
         _chart_data_url(str(secret), str(charts))
         is None
     )
+
+
+def test_delete_removes_the_stored_report(store):
+    report_id = store.save("s1", "the report body")
+
+    assert store.delete(report_id) is True
+
+    assert store.get(report_id) is None
+    assert store.list_reports() == []
+
+
+def test_delete_removes_the_file_not_just_the_record(store):
+    """
+    A report is one JSON file. Deleting must remove it from
+    disk, or the next listing still finds it.
+    """
+
+    report_id = store.save("s1", "body")
+
+    path = store.directory / f"{report_id}.json"
+
+    assert path.is_file()
+
+    store.delete(report_id)
+
+    assert not path.exists()
+
+
+def test_deleting_an_unknown_report_is_false(store):
+    """
+    A caller must be able to tell a real delete from a
+    no-op, so deleting an id that never existed reports
+    False rather than claiming success.
+    """
+
+    assert store.delete("0" * 32) is False
+
+
+def test_delete_refuses_an_unsafe_id(store):
+    """
+    The id comes from a URL. A traversal segment must not be
+    able to delete anything outside the reports directory.
+    """
+
+    victim = store.directory.parent / "victim.json"
+    victim.write_text("{}", encoding="utf-8")
+
+    for attempt in (
+        "../victim",
+        "..\\victim",
+        "a/b",
+        "",
+        "....",
+    ):
+        assert store.delete(attempt) is False
+
+    assert victim.exists()
+
+
+def test_delete_leaves_other_reports_alone(store):
+    keep = store.save("s1", "keep me")
+    remove = store.save("s1", "remove me")
+
+    store.delete(remove)
+
+    remaining = store.list_reports()
+
+    assert len(remaining) == 1
+    assert remaining[0]["report_id"] == keep
+
+
+def test_report_document_records_the_source_dataset(tmp_path):
+    """
+    A report must name the dataset it was built from. The
+    whole point of choosing a source is that the report
+    records which one it used, so a reader can tell two
+    reports apart.
+    """
+
+    import pandas as pd
+
+    from data_analysis.reporting import (
+        build_report_document,
+    )
+
+    dataframe = pd.DataFrame(
+        {
+            "Product": ["A", "B"],
+            "Revenue": [10, 20],
+        }
+    )
+
+    document = build_report_document(
+        dataframe,
+        dataset_name="chosen.csv",
+        report_directory=tmp_path / "reports",
+        chart_directory=tmp_path / "charts",
+    )
+
+    assert document["dataset_name"] == "chosen.csv"

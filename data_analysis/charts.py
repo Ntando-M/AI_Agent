@@ -529,6 +529,14 @@ def generate_standard_sales_charts(
 ) -> dict[str, str]:
     """
     Generate the standard V7 sales charts.
+
+    A chart whose required columns are absent is skipped
+    rather than raising. The dataset is now selectable, so a
+    report can legitimately be built from a table that has a
+    Revenue column but no Region - failing the whole report
+    over one impossible chart would deny the user the facts
+    and findings that *could* be derived. The returned dict
+    names only the charts actually written.
     """
 
     output_directory = Path(
@@ -540,33 +548,43 @@ def generate_standard_sales_charts(
         exist_ok=True,
     )
 
-    return {
-        "revenue_by_product": plot_revenue_by_product(
-            dataframe,
-            output_path=(
-                output_directory
-                / "revenue_by_product.png"
-            ),
+    candidates = (
+        (
+            "revenue_by_product",
+            plot_revenue_by_product,
+            "revenue_by_product.png",
         ),
-        "revenue_by_region": plot_revenue_by_region(
-            dataframe,
-            output_path=(
-                output_directory
-                / "revenue_by_region.png"
-            ),
+        (
+            "revenue_by_region",
+            plot_revenue_by_region,
+            "revenue_by_region.png",
         ),
-        "monthly_revenue": plot_monthly_revenue(
-            dataframe,
-            output_path=(
-                output_directory
-                / "monthly_revenue.png"
-            ),
+        (
+            "monthly_revenue",
+            plot_monthly_revenue,
+            "monthly_revenue.png",
         ),
-        "revenue_trend": plot_revenue_trend(
-            dataframe,
-            output_path=(
-                output_directory
-                / "revenue_trend.png"
-            ),
+        (
+            "revenue_trend",
+            plot_revenue_trend,
+            "revenue_trend.png",
         ),
-    }
+    )
+
+    charts: dict[str, str] = {}
+
+    for name, plot, filename in candidates:
+        try:
+            charts[name] = plot(
+                dataframe,
+                output_path=(
+                    output_directory / filename
+                ),
+            )
+        except (ValueError, TypeError, KeyError):
+            # The columns this chart needs are not in this
+            # dataset. Skipping it is correct; the remaining
+            # charts and every non-chart section still stand.
+            continue
+
+    return charts

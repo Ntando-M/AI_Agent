@@ -514,6 +514,32 @@ class ReportStore:
             if report["session_id"] == session_id
         ]
 
+    def delete(self, report_id: str) -> bool:
+        """
+        Remove one stored report.
+
+        Returns False when there is nothing to remove, so a
+        caller can tell a no-op from a real delete rather
+        than reporting success for an id that never existed.
+
+        The id is validated before it is used to build a
+        path: it arrives from a URL, and a traversal segment
+        must not be able to delete anything outside the
+        reports directory.
+        """
+
+        if not _is_safe_report_id(report_id):
+            return False
+
+        path = self._path(report_id)
+
+        if not path.is_file():
+            return False
+
+        path.unlink()
+
+        return True
+
     def _path(self, report_id: str) -> Path:
         return self.directory / f"{report_id}.json"
 

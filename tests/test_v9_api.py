@@ -122,6 +122,12 @@ def settings(tmp_path) -> Settings:
         dataset_upload_directory=str(
             tmp_path / "uploads"
         ),
+        reports_directory=str(
+            tmp_path / "reports"
+        ),
+        chart_directory=str(
+            tmp_path / "charts"
+        ),
         allowed_origins=("http://localhost:4200",),
     )
 
@@ -1145,6 +1151,168 @@ def test_unknown_report_returns_none(tmp_path):
     store = ReportStore(directory=tmp_path / "reports")
 
     assert store.get("nope") is None
+
+
+def test_delete_unknown_report_is_404(client):
+    response = client.delete(
+        f"/reports/{'0' * 32}",
+        headers=AUTH,
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_report_requires_a_key(client):
+    assert (
+        client.delete(
+            f"/reports/{'0' * 32}"
+        ).status_code
+        == 401
+    )
+
+
+def test_delete_report_removes_it_from_the_list(client):
+    """
+    The endpoint, not just the store: a report generated
+    through the API must be removable through the API, and
+    must then be gone from the listing.
+    """
+
+    created = client.post(
+        "/reports",
+        headers=AUTH,
+        json={"session_id": None},
+    )
+
+    assert created.status_code == 201
+
+    report_id = created.json()["report_id"]
+
+    listed = [
+        entry["report_id"]
+        for entry in client.get(
+            "/reports", headers=AUTH
+        ).json()
+    ]
+
+    assert report_id in listed
+
+    removed = client.delete(
+        f"/reports/{report_id}",
+        headers=AUTH,
+    )
+
+    assert removed.status_code == 200
+    assert removed.json()["deleted"] is True
+
+    assert (
+        client.get(
+            f"/reports/{report_id}",
+            headers=AUTH,
+        ).status_code
+        == 404
+    )
+
+    after = [
+        entry["report_id"]
+        for entry in client.get(
+            "/reports", headers=AUTH
+        ).json()
+    ]
+
+    assert report_id not in after
+
+
+def test_report_can_be_generated_from_a_named_dataset(
+    client, tmp_path
+):
+    """
+    Choosing a source. A report generated from a named
+    dataset must record that dataset's name, so two reports
+    from different sources are distinguishable.
+    """
+
+    import pandas as pd
+
+    uploads = tmp_path / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+
+    chosen = uploads / "chosen_source.csv"
+
+    pd.DataFrame(
+        {
+            "Product": ["A", "B"],
+            "Revenue": [10, 20],
+        }
+    ).to_csv(chosen, index=False)
+
+    created = client.post(
+        "/reports",
+        headers=AUTH,
+        json={
+            "session_id": None,
+            "dataset": "chosen_source.csv",
+        },
+    )
+
+    assert created.status_code == 201
+
+    body = created.json()
+
+    assert body["dataset_name"] == "chosen_source.csv"
+    assert body["layers"]["facts"]
+
+
+def test_report_for_an_unknown_dataset_is_404(client):
+    response = client.post(
+        "/reports",
+        headers=AUTH,
+        json={
+            "session_id": None,
+            "dataset": "does-not-exist.csv",
+        },
+    )
+
+    assert response.status_code == 404
+
+
+def test_report_dataset_name_cannot_escape_the_upload_directory(
+    client,
+):
+    """
+    The dataset name comes from the client. A traversal
+    segment must not let a report read a file outside the
+    upload directory - the registry sanitises the name to a
+    bare basename, so this resolves to nothing.
+    """
+
+    response = client.post(
+        "/reports",
+        headers=AUTH,
+        json={
+            "session_id": None,
+            "dataset": "../../.env",
+        },
+    )
+
+    assert response.status_code == 404
+
+
+def test_report_defaults_to_the_loaded_dataset(client):
+    """
+    No dataset named: the engine's loaded dataset is used,
+    so an existing caller that sends only a session id keeps
+    working.
+    """
+
+    created = client.post(
+        "/reports",
+        headers=AUTH,
+        json={"session_id": None},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["dataset_name"]
 
 
 # ========================================================

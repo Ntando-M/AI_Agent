@@ -224,14 +224,23 @@ class DocumentListResponse(BaseModel):
 
 class GenerateReportRequest(BaseModel):
     """
-    A request to generate a report for the loaded dataset.
+    A request to generate a report for a dataset.
 
     `session_id` is optional: a report can be generated
     without being attached to a conversation, and the
     reports page lists both.
+
+    `dataset` names the source to build the report from. It
+    is optional and defaults to the dataset the engine has
+    loaded, so an existing caller that sends only a session
+    id keeps working. A named dataset must be one the
+    registry can resolve - it is looked up, never taken as a
+    path from the client.
     """
 
     session_id: str | None = None
+
+    dataset: str | None = None
 
 
 class ReportPayload(BaseModel):

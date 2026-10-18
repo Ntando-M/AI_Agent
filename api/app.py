@@ -77,6 +77,7 @@ from api.uploads import (
     sanitise_filename,
 )
 from memory.sqlite_store import SQLiteConversationStore
+from data_analysis import load_dataset
 from data_analysis.reporting import (
     build_report_document,
 )
@@ -1200,8 +1201,15 @@ def create_app(
         request: GenerateReportRequest,
     ) -> ReportPayload:
         """
-        Generate a deterministic report for the loaded
-        dataset and persist it.
+        Generate a deterministic report for a dataset and
+        persist it.
+
+        The source is the dataset named in the request, or
+        the one the engine has loaded when none is named. The
+        named source is resolved through the registry, which
+        sanitises the name and confines it to the upload
+        directory - a client-supplied string is never used as
+        a path directly.
 
         No LLM is involved: the report is arithmetic over
         the dataframe, so it is reproducible and cannot
@@ -1209,27 +1217,65 @@ def create_app(
         choose operations, not to author reports.
         """
 
-        if orchestrator.data_agent is None:
+        dataframe = None
+        dataset_name = None
+
+        if request.dataset:
+            resolved = datasets.get(request.dataset)
+
+            if resolved is None:
+                raise HTTPException(
+                    status_code=(
+                        status.HTTP_404_NOT_FOUND
+                    ),
+                    detail=(
+                        f"Dataset '{request.dataset}' "
+                        f"not found."
+                    ),
+                )
+
+            try:
+                dataframe = load_dataset(str(resolved))
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=(
+                        status.HTTP_400_BAD_REQUEST
+                    ),
+                    detail=(
+                        f"Could not read dataset "
+                        f"'{request.dataset}': {exc}"
+                    ),
+                ) from exc
+
+            dataset_name = resolved.name
+
+        elif orchestrator.data_agent is not None:
+            dataframe = (
+                orchestrator.data_agent.dataframe
+            )
+
+            dataset_name = (
+                Path(orchestrator.dataset_path).name
+                if orchestrator.dataset_path
+                else None
+            )
+
+        if dataframe is None:
             raise HTTPException(
                 status_code=(
                     status.HTTP_409_CONFLICT
                 ),
                 detail=(
-                    "No dataset is loaded, so a report "
-                    "cannot be generated."
+                    "No dataset is loaded and none was "
+                    "named, so a report cannot be "
+                    "generated."
                 ),
             )
-
-        dataframe = orchestrator.data_agent.dataframe
 
         try:
             document = build_report_document(
                 dataframe,
-                dataset_name=(
-                    Path(orchestrator.dataset_path).name
-                    if orchestrator.dataset_path
-                    else None
-                ),
+                dataset_name=dataset_name,
                 report_directory=(
                     settings.reports_directory
                 ),
@@ -1339,6 +1385,46 @@ def create_app(
             )
 
         return _report_payload(report)
+
+    @app.delete(
+        "/reports/{report_id}",
+        response_model=DeleteUploadResponse,
+        dependencies=[auth],
+    )
+    def delete_report(
+        report_id: str,
+    ) -> DeleteUploadResponse:
+        """
+        Remove one stored report.
+
+        404 for an unknown id rather than a silent 200, so a
+        client can tell "already gone" from "just removed".
+        The response reuses the upload-delete shape because
+        both report a name and whether anything was removed.
+        """
+
+        if not reports.delete(report_id):
+            raise HTTPException(
+                status_code=(
+                    status.HTTP_404_NOT_FOUND
+                ),
+                detail=(
+                    f"Report '{report_id}' not found."
+                ),
+            )
+
+        log_event(
+            request_logger,
+            logging.INFO,
+            "report_deleted",
+            report_id=report_id,
+        )
+
+        return DeleteUploadResponse(
+            name=report_id,
+            deleted=True,
+            chunks_removed=0,
+        )
 
     return app
 
