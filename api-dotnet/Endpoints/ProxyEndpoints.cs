@@ -280,6 +280,20 @@ public static class ProxyEndpoints
                 cancellationToken))
         .WithName("GetReport")
         .WithTags("reports");
+
+        group.MapDelete("/reports/{reportId}", async (
+            string reportId,
+            PythonAnalysisClient python,
+            CancellationToken cancellationToken) =>
+            await ProxyAsync(
+                python,
+                HttpMethod.Delete,
+                $"/reports/{Uri.EscapeDataString(reportId)}",
+                null,
+                null,
+                cancellationToken))
+        .WithName("DeleteReport")
+        .WithTags("reports");
     }
 
     // ========================================================
