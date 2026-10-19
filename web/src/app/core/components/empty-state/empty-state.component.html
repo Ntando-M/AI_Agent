@@ -1,0 +1,10 @@
+<div class="empty-state" role="status">
+  <app-icon [name]="icon" class="empty-icon"></app-icon>
+  <h3 class="empty-title">{{ title }}</h3>
+  @if (message) {
+    <p class="empty-message">{{ message }}</p>
+  }
+  @if (ctaLabel) {
+    <button class="empty-cta" (click)="cta.emit()">{{ ctaLabel }}</button>
+  }
+</div>

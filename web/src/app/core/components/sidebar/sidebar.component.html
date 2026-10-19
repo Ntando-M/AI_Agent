@@ -1,0 +1,42 @@
+<aside class="sidebar" [class.collapsed]="appState.sidebarCollapsed()">
+  <div class="sidebar-header">
+    <button class="collapse-btn" (click)="toggleCollapse()" [attr.aria-label]="appState.sidebarCollapsed() ? 'Expand sidebar' : 'Collapse sidebar'">
+      <app-icon [name]="appState.sidebarCollapsed() ? 'arrow-right' : 'arrow-left'" class="collapse-icon"></app-icon>
+    </button>
+  </div>
+
+  <nav class="sidebar-nav" aria-label="Sidebar navigation">
+    <a routerLink="/chat" routerLinkActive="active" class="sidebar-link">
+      <app-icon name="chat" class="sidebar-icon"></app-icon>
+      @if (!appState.sidebarCollapsed()) {
+        <span class="sidebar-label">Chat</span>
+      }
+    </a>
+    <a routerLink="/reports" routerLinkActive="active" class="sidebar-link">
+      <app-icon name="report" class="sidebar-icon"></app-icon>
+      @if (!appState.sidebarCollapsed()) {
+        <span class="sidebar-label">Reports</span>
+      }
+    </a>
+    <a routerLink="/datasets" routerLinkActive="active" class="sidebar-link">
+      <app-icon name="chart-bar" class="sidebar-icon"></app-icon>
+      @if (!appState.sidebarCollapsed()) {
+        <span class="sidebar-label">Datasets</span>
+      }
+    </a>
+    <a routerLink="/documents" routerLinkActive="active" class="sidebar-link">
+      <app-icon name="document" class="sidebar-icon"></app-icon>
+      @if (!appState.sidebarCollapsed()) {
+        <span class="sidebar-label">Documents</span>
+      }
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    @if (!appState.sidebarCollapsed()) {
+      <div class="sidebar-info">
+        <span class="sidebar-version">v2.0</span>
+      </div>
+    }
+  </div>
+</aside>

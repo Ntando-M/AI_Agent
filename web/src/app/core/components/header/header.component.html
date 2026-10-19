@@ -1,0 +1,40 @@
+<header class="app-header">
+  <div class="header-brand">
+    <app-icon name="chart-bar" class="sidebar-icon"></app-icon>
+    <span class="brand-name">AI Data Analyst</span>
+  </div>
+
+  <nav class="header-nav" aria-label="Main navigation">
+    <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}">Dashboard</a>
+    <a routerLink="/chat" routerLinkActive="active">Chat</a>
+    <a routerLink="/analysis" routerLinkActive="active">Analysis</a>
+    <a routerLink="/reports" routerLinkActive="active">Reports</a>
+    <a routerLink="/datasets" routerLinkActive="active">Datasets</a>
+    <a routerLink="/documents" routerLinkActive="active">Documents</a>
+  </nav>
+
+  <div class="header-status">
+    @if (appState.isLive()) {
+      <span class="status-pill live">
+        <span class="status-dot"></span> Live
+      </span>
+    } @else {
+      <span class="status-pill offline">
+        <span class="status-dot"></span> Offline
+      </span>
+    }
+    @if (appState.health()?.provider) {
+      <span class="status-pill provider">{{ appState.health()?.provider }}</span>
+    }
+    @if (appState.health()?.version) {
+      <span class="status-pill version">{{ appState.health()?.version }}</span>
+    }
+  </div>
+
+  <div class="header-actions">
+    <button class="theme-toggle" (click)="toggleTheme()"
+            [attr.aria-label]="themeSvc.theme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
+      {{ themeSvc.theme() === 'dark' ? '☀️' : '🌙' }}
+    </button>
+  </div>
+</header>

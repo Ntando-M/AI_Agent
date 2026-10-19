@@ -148,6 +148,7 @@ def test_standard_sales_charts(
         "revenue_by_region",
         "monthly_revenue",
         "revenue_trend",
+        "revenue_distribution",
     }
 
     for path in result.values():

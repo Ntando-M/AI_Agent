@@ -95,21 +95,9 @@
             [attr.aria-current]="view() === 'manage' ? 'page' : null"
             (click)="showView('manage')"
           >
-            Data
+            Data Uploads
             @if (documentCount(); as count) {
               <span class="tab-badge">{{ count }}</span>
-            }
-          </button>
-          <button
-            type="button"
-            class="tab"
-            [class.active]="view() === 'reports'"
-            [attr.aria-current]="view() === 'reports' ? 'page' : null"
-            (click)="showView('reports')"
-          >
-            Reports
-            @if (reports().length) {
-              <span class="tab-badge">{{ reports().length }}</span>
             }
           </button>
         <!-- </nav> -->
@@ -137,15 +125,6 @@
                 </button>
                 <button
                   type="button"
-                  class="rename-btn"
-                  title="Rename conversation"
-                  [attr.aria-label]="'Rename ' + session.name"
-                  (click)="openRenameDialog(session.session_id)"
-                >
-                  <span class="rename-icon" aria-hidden="true">✎</span>
-                </button>
-                <button
-                  type="button"
                   class="delete-btn"
                   title="Delete conversation"
                   (click)="removeSession(session.session_id)"
@@ -166,18 +145,6 @@
         @if (activeSessionName(); as name) {
           <div class="conversation-head">
             <h2>{{ name }}</h2>
-            @if (activeSession(); as id) {
-              <button
-                type="button"
-                class="rename-btn head-rename"
-                title="Rename conversation"
-                aria-label="Rename this conversation"
-                (click)="openRenameDialog(id)"
-              >
-                <span class="rename-icon" aria-hidden="true">✎</span>
-                <span class="rename-text">Rename</span>
-              </button>
-            }
           </div>
         }
 
@@ -199,7 +166,7 @@
             } @else if (turn.answer; as answer) {
               <p class="answer">{{ answer.answer }}</p>
 
-              @if (!turn.restored || turn.hasEvidence) {
+              @if (!turn.restored) {
                 <div class="tags">
                   <span class="tag">{{ answer.analysis_type }}</span>
                   <span class="tag">confidence {{ confidencePercent(answer.confidence) }}</span>
@@ -414,114 +381,6 @@
         </p>
       </section>
     }
-
-    @if (view() === 'reports') {
-      <section class="reports">
-        @if (activeReport(); as report) {
-          <div class="report-head">
-            <button
-              type="button"
-              class="ghost-btn"
-              (click)="closeReport()"
-            >
-              ← All reports
-            </button>
-
-            <h2>
-              {{ report.dataset_name || 'Report' }}
-            </h2>
-
-            <p class="report-meta">
-              {{ reportDate(report.created_at) }}
-            </p>
-          </div>
-
-          @for (section of reportSections; track section.key) {
-            @if (report.layers[section.key]?.length) {
-              <article class="report-section">
-                <h3>{{ section.title }}</h3>
-                <p class="report-hint">{{ section.hint }}</p>
-                <ul>
-                  @for (line of report.layers[section.key]; track line) {
-                    <li>{{ line }}</li>
-                  }
-                </ul>
-              </article>
-            }
-          }
-
-          @if (report.chart_images | keyvalue; as images) {
-            @if (images.length) {
-              <article class="report-section">
-                <h3>Charts</h3>
-                <div class="report-charts">
-                  @for (chart of images; track chart.key) {
-                    <figure class="report-chart">
-                      <img
-                        [src]="chart.value"
-                        [alt]="chart.key"
-                        loading="lazy"
-                      />
-                      <figcaption>{{ chart.key }}</figcaption>
-                    </figure>
-                  }
-                </div>
-              </article>
-            }
-          }
-
-          <details class="panel">
-            <summary>
-              <span class="summary-text">Full text report</span>
-            </summary>
-            <pre class="report-text">{{ report.content }}</pre>
-          </details>
-        } @else {
-          <div class="report-head">
-            <h2>Reports</h2>
-            <p class="report-meta">
-              Deterministic summaries of the loaded dataset. Every figure is
-              calculated, never written by the model.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            class="primary-btn"
-            [disabled]="generatingReport()"
-            (click)="generateReport()"
-          >
-            {{ generatingReport() ? 'Generating…' : 'Generate report' }}
-          </button>
-
-          @if (reportError(); as message) {
-            <p class="error">{{ message }}</p>
-          }
-
-          <ul class="report-list">
-            @for (report of reports(); track report.report_id) {
-              <li>
-                <button
-                  type="button"
-                  class="report-row"
-                  (click)="openReport(report.report_id)"
-                >
-                  <span class="report-name">
-                    {{ report.dataset_name || 'Report' }}
-                  </span>
-                  <span class="report-preview">{{ report.preview }}</span>
-                  <span class="report-date">
-                    {{ reportDate(report.created_at) }}
-                  </span>
-                </button>
-              </li>
-            } @empty {
-              <li class="empty">No reports yet.</li>
-            }
-          </ul>
-        }
-      </section>
-    }
   </main>
 
   @if (namingOpen()) {
@@ -533,15 +392,9 @@
         aria-labelledby="naming-title"
         (click)="$event.stopPropagation()"
       >
-        <h2 id="naming-title">
-          {{ isRenaming() ? 'Rename conversation' : 'New conversation' }}
-        </h2>
+        <h2 id="naming-title">New conversation</h2>
         <p class="modal-hint">
-          @if (isRenaming()) {
-            Renaming “{{ renamingLabel() }}”. Enter a new name.
-          } @else {
-            Give it a name, or leave it blank to start an unnamed conversation.
-          }
+          Give it a name, or leave it blank to start an unnamed conversation.
         </p>
 
         <input
@@ -561,12 +414,8 @@
           <button type="button" class="ghost-btn" (click)="closeNamingDialog()">
             Cancel
           </button>
-          <button
-            type="button"
-            class="primary-btn"
-            (click)="confirmNaming()"
-          >
-            {{ isRenaming() ? 'Rename' : 'Create' }}
+          <button type="button" class="primary-btn" (click)="startSession()">
+            Create
           </button>
         </div>
       </div>

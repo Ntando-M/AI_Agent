@@ -1,0 +1,9 @@
+@if (message) {
+  <div class="error-banner" role="alert">
+    <app-icon name="warning" class="error-icon"></app-icon>
+    <span class="error-text">{{ message }}</span>
+    @if (dismissible) {
+      <button class="error-dismiss" (click)="dismiss.emit()" aria-label="Dismiss error"><app-icon name="close" class="icon-btn-icon"></app-icon></button>
+    }
+  </div>
+}

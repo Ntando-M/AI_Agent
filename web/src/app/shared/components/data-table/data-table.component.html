@@ -1,0 +1,22 @@
+@if (columns.length > 0 && rows.length > 0) {
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          @for (col of columns; track col) {
+            <th>{{ col }}</th>
+          }
+        </tr>
+      </thead>
+      <tbody>
+        @for (row of rows.slice(0, maxRows); track $index) {
+          <tr>
+            @for (col of columns; track col) {
+              <td>{{ row[col] ?? '—' }}</td>
+            }
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+}

@@ -1,0 +1,19 @@
+<div class="drop-zone" [class.drag-over]="isDragOver"
+     (dragover)="onDragOver($event)" (dragleave)="onDragLeave()"
+     (drop)="onDrop($event)">
+  <input type="file" [accept]="accept" class="drop-input"
+         (change)="onFileInput($event)" [disabled]="uploading" />
+  <div class="drop-content" [class.hidden]="uploading">
+    <app-icon name="folder" class="drop-icon"></app-icon>
+    <span class="drop-label">{{ label }}</span>
+    @if (hint) {
+      <span class="drop-hint">{{ hint }}</span>
+    }
+  </div>
+  @if (uploading) {
+    <div class="drop-uploading">
+      <div class="spinner-sm"></div>
+      <span>Uploading...</span>
+    </div>
+  }
+</div>

@@ -29,6 +29,12 @@ def _find_column(
     Find the first column whose lowercase name matches
     any candidate (case-insensitive, also matches common
     synonyms like 'sales' or 'amount' for 'revenue').
+
+    A candidate matches when the column name equals it or
+    contains it, so 'registration_date' is recognised as a
+    date column. The exact match is tried first so a column
+    literally named 'Date' wins over one that merely
+    contains the word.
     """
 
     lowered = {
@@ -40,7 +46,127 @@ def _find_column(
         if candidate.lower() in lowered:
             return lowered[candidate.lower()]
 
+    for candidate in candidates:
+        needle = candidate.lower()
+
+        for lowered_name, original in lowered.items():
+            if needle in lowered_name:
+                return original
+
     return None
+
+
+def _is_identifier(column: object) -> bool:
+    """
+    Whether a numeric column is a surrogate key.
+
+    An id's min, max and mean are properties of the row
+    numbering, not of anything a reader can act on, so it
+    must not be picked as the column a report describes.
+    Matched on whole words: 'user_id' and 'id' are keys,
+    'valid' and 'grid' are not.
+    """
+
+    name = str(column).lower()
+
+    return (
+        name in {"id", "key", "index", "uuid"}
+        or name.endswith("_id")
+        or name.startswith("id_")
+    )
+
+
+def _find_numeric_column(
+    dataframe: pd.DataFrame,
+) -> str | None:
+    """
+    The first numeric column that measures something,
+    preferring one whose name looks like money.
+
+    Used by the general summary, which must pick one column
+    to describe rather than assume the dataset has a
+    'Revenue' column at all. Identifier columns are skipped:
+    a report whose headline figure is 'id ranges from 1 to
+    4' is not analysis.
+    """
+
+    numeric = [
+        column
+        for column in dataframe.columns
+        if pd.api.types.is_numeric_dtype(
+            dataframe[column]
+        )
+        and not _is_identifier(column)
+    ]
+
+    for candidate in (
+        "revenue",
+        "sales",
+        "amount",
+        "total",
+        "income",
+        "price",
+        "value",
+    ):
+        for column in numeric:
+            if candidate in str(column).lower():
+                return column
+
+    return numeric[0] if numeric else None
+
+
+def _categorical_counts(
+    dataframe: pd.DataFrame,
+    date_column: str | None,
+) -> dict[str, dict[str, int]]:
+    """
+    Value counts for each non-numeric column that repeats a
+    value.
+
+    A column where every row is unique - an email, an ip
+    address - has no distribution to report, so it is left
+    out. What remains is the categorical shape of the data,
+    which is the one thing a users export does carry.
+    """
+
+    counts: dict[str, dict[str, int]] = {}
+
+    for column in dataframe.columns:
+        if column == date_column:
+            continue
+
+        if pd.api.types.is_numeric_dtype(
+            dataframe[column]
+        ):
+            continue
+
+        values = (
+            dataframe[column].dropna().value_counts()
+        )
+
+        if values.empty:
+            continue
+
+        if len(values) >= len(dataframe):
+            continue
+
+        # Sorted by count then by label: a tie must always
+        # name the same value, or the finding changes between
+        # pandas versions.
+        ordered = sorted(
+            values.items(),
+            key=lambda item: (
+                -item[1],
+                str(item[0]),
+            ),
+        )
+
+        counts[str(column)] = {
+            str(value): int(count)
+            for value, count in ordered
+        }
+
+    return counts
 
 
 def build_dataset_summary(
@@ -191,7 +317,77 @@ def build_dataset_summary(
         "date": date_col,
     }
 
+    if revenue_col is None:
+        # No sales column, so the revenue-specific sections
+        # above are all absent. Describe the columns that are
+        # present instead, or the report has nothing to say.
+        general_column = _find_numeric_column(
+            dataframe
+        )
+
+        if general_column is not None:
+            summary["general_statistics"] = (
+                calculate_statistics(
+                    dataframe,
+                    general_column,
+                )
+            )
+
+        summary["general_column"] = general_column
+
+        summary["categorical_counts"] = (
+            _categorical_counts(
+                dataframe,
+                date_col,
+            )
+        )
+
+        if date_col:
+            summary["records_by_period"] = (
+                _records_by_period(
+                    dataframe,
+                    date_col,
+                )
+            )
+
     return summary
+
+
+def _records_by_period(
+    dataframe: pd.DataFrame,
+    date_column: str,
+) -> dict[str, int]:
+    """
+    Row counts grouped by calendar month.
+
+    A count is the one arithmetic every dataset supports, so
+    a table with no numeric column still gets a finding: how
+    its records are distributed over time.
+    """
+
+    dates = pd.to_datetime(
+        dataframe[date_column],
+        errors="coerce",
+    )
+
+    working = dataframe.loc[dates.notna()].copy()
+    working["_Date"] = dates[dates.notna()]
+
+    if working.empty:
+        return {}
+
+    monthly = (
+        working["_Date"]
+        .dt.to_period("M")
+        .astype(str)
+        .value_counts()
+        .sort_index()
+    )
+
+    return {
+        str(month): int(count)
+        for month, count in monthly.items()
+    }
 
 
 def _format_currency(value: float) -> str:
@@ -203,6 +399,18 @@ def _format_currency(value: float) -> str:
     """
 
     return f"R{value:,.2f}"
+
+
+def _format_number(value: float) -> str:
+    """
+    Render a figure from a non-monetary column.
+
+    The general summary describes whatever numeric column a
+    dataset has - an id, an age, a score - and prefixing those
+    with a currency symbol would misrepresent them.
+    """
+
+    return f"{value:,.2f}"
 
 
 def _percent(value: float) -> str:
@@ -384,11 +592,68 @@ def build_finding_layers(
                     f"the period covered by the dataset."
                 )
 
-    if not findings:
+    general_column = summary.get("general_column")
+
+    if general_column:
+        statistics = summary["general_statistics"]
+
         findings.append(
-            "No revenue column was available, so no "
-            "calculated findings could be derived."
+            f"{general_column} ranges from "
+            f"{_format_number(statistics['min'])} to "
+            f"{_format_number(statistics['max'])}, "
+            f"averaging {_format_number(statistics['mean'])} "
+            f"across {int(statistics['count'])} records."
         )
+
+    records_by_period = summary.get(
+        "records_by_period"
+    )
+
+    if records_by_period:
+        busiest_month = max(
+            records_by_period.items(),
+            key=lambda item: item[1],
+        )
+
+        findings.append(
+            f"{busiest_month[0]} holds the most records "
+            f"({busiest_month[1]} of {summary['rows']})."
+        )
+
+    categorical_counts = summary.get(
+        "categorical_counts"
+    )
+
+    for column, counts in (
+        categorical_counts or {}
+    ).items():
+        top_value, top_count = next(
+            iter(counts.items())
+        )
+
+        share = (
+            top_count / summary["rows"] * 100
+        )
+
+        findings.append(
+            f"{column} is dominated by {top_value} "
+            f"({top_count} of {summary['rows']} records, "
+            f"{_percent(share)})."
+        )
+
+    if not findings:
+        if revenue_col is None:
+            findings.append(
+                "The dataset has no revenue column and no "
+                "numeric column, so no calculated findings "
+                "could be derived."
+            )
+        else:
+            findings.append(
+                "A revenue column is present but no Product, "
+                "Region or Date column accompanies it, so no "
+                "grouped findings could be derived."
+            )
 
     return {
         "facts": facts,
@@ -595,6 +860,55 @@ def save_report_summary(
             lines.append(
                 f"{key}: {value}"
             )
+
+        lines.append("")
+
+    general_column = summary.get("general_column")
+
+    if general_column:
+        lines.append(
+            f"{general_column.upper()} STATISTICS"
+        )
+        lines.append(
+            "-" * 40
+        )
+
+        for key, value in summary[
+            "general_statistics"
+        ].items():
+            lines.append(f"{key}: {value}")
+
+        lines.append("")
+
+    records_by_period = summary.get(
+        "records_by_period"
+    )
+
+    if records_by_period:
+        lines.append(
+            "RECORDS BY MONTH"
+        )
+        lines.append(
+            "-" * 40
+        )
+
+        for month, count in records_by_period.items():
+            lines.append(f"{month}: {count}")
+
+        lines.append("")
+
+    categorical_counts = summary.get(
+        "categorical_counts"
+    )
+
+    for column, counts in (
+        categorical_counts or {}
+    ).items():
+        lines.append(f"{column.upper()} VALUES")
+        lines.append("-" * 40)
+
+        for value, count in counts.items():
+            lines.append(f"{value}: {count}")
 
         lines.append("")
 

@@ -1,0 +1,8 @@
+:host {
+  display: block;
+}
+img {
+  border-radius: var(--radius-md);
+  cursor: zoom-in;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}

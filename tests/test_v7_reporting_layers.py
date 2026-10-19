@@ -338,6 +338,9 @@ def test_no_revenue_column_still_reports_a_finding():
     """
     A dataset without revenue must degrade honestly rather
     than crash or invent a number.
+
+    'Score' is numeric, so the report describes it instead of
+    claiming a revenue column is missing.
     """
 
     dataframe = pd.DataFrame(
@@ -358,8 +361,160 @@ def test_no_revenue_column_still_reports_a_finding():
 
     assert result["facts"]
 
+    assert summary["general_column"] == "Score"
+
     assert any(
+        "Score ranges from" in entry
+        for entry in result["calculated_findings"]
+    )
+
+    assert not any(
         "No revenue column" in entry
+        for entry in result["calculated_findings"]
+    )
+
+
+def test_revenue_column_without_grouping_columns_is_not_called_missing():
+    """
+    The fallback must state the actual blocker. A revenue
+    column with no Product/Region/Date to group by used to be
+    reported as 'no revenue column was available', which was
+    false and sent a reader looking for the wrong thing.
+    """
+
+    dataframe = pd.DataFrame(
+        {
+            "Revenue": [100.0, 250.0],
+        }
+    )
+
+    summary = build_dataset_summary(
+        dataframe
+    )
+
+    result = build_finding_layers(
+        dataframe,
+        summary,
+    )
+
+    assert not any(
+        "No revenue column" in entry
+        for entry in result["calculated_findings"]
+    )
+
+    assert any(
+        "no Product, Region or Date column" in entry
+        for entry in result["calculated_findings"]
+    )
+
+
+def test_a_users_dataset_reports_real_findings():
+    """
+    A table with no sales columns at all - the shape of an
+    uploaded users export - must still produce arithmetic.
+
+    This is the regression for a real report: sample-users.csv
+    produced one fact, an empty chart set and a claim that no
+    revenue column existed, which read as 'the engine is
+    broken' rather than 'this dataset is not sales data'.
+    """
+
+    dataframe = pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4],
+            "first_name": [
+                "Jeanette",
+                "Giavani",
+                "Noell",
+                "Willard",
+            ],
+            "gender": [
+                "Female",
+                "Male",
+                "Female",
+                "Male",
+            ],
+            "registration_date": [
+                "2023-10-12",
+                "2024-01-05",
+                "2023-11-20",
+                "2024-02-14",
+            ],
+        }
+    )
+
+    summary = build_dataset_summary(
+        dataframe
+    )
+
+    # 'registration_date' contains 'date', so it is found
+    # rather than missed by exact-name matching alone.
+    assert summary["_detected_columns"]["date"] == (
+        "registration_date"
+    )
+
+    assert "revenue_by_product" not in summary
+
+    result = build_finding_layers(
+        dataframe,
+        summary,
+    )
+
+    # 'id' is a surrogate key, so it is not reported as a
+    # measure - its min and max describe the row numbering.
+    assert summary["general_column"] is None
+
+    assert summary["categorical_counts"] == {
+        "gender": {"Female": 2, "Male": 2}
+    }
+
+    assert summary["records_by_period"] == {
+        "2023-10": 1,
+        "2023-11": 1,
+        "2024-01": 1,
+        "2024-02": 1,
+    }
+
+    assert any(
+        "gender is dominated by Female" in entry
+        for entry in result["calculated_findings"]
+    )
+
+    assert any(
+        "holds the most records" in entry
+        for entry in result["calculated_findings"]
+    )
+
+    assert not any(
+        "ranges from" in entry
+        for entry in result["calculated_findings"]
+    )
+
+
+def test_a_dataset_with_nothing_to_calculate_says_so():
+    """
+    Text columns only: the report must say it could derive
+    nothing, rather than silently returning an empty layer.
+    """
+
+    dataframe = pd.DataFrame(
+        {
+            "Name": ["a", "b"],
+            "Email": ["a@x.com", "b@x.com"],
+        }
+    )
+
+    summary = build_dataset_summary(
+        dataframe
+    )
+
+    result = build_finding_layers(
+        dataframe,
+        summary,
+    )
+
+    assert any(
+        "no revenue column and no numeric column" in entry
         for entry in result["calculated_findings"]
     )
 

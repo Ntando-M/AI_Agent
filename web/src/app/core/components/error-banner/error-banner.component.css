@@ -1,0 +1,22 @@
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--status-error-bg);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: var(--radius-md);
+  color: var(--status-error);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-4);
+}
+.error-icon { flex-shrink: 0; }
+.error-text { flex: 1; }
+.error-dismiss {
+  background: none;
+  border: none;
+  color: var(--status-error);
+  font-size: var(--text-md);
+  padding: var(--space-1);
+  cursor: pointer;
+}

@@ -103,7 +103,7 @@ def test_generate_sales_report(
 
     assert len(
         result["charts"]
-    ) == 4
+    ) == 5
 
     for chart_path in result[
         "charts"

@@ -569,6 +569,13 @@ def generate_standard_sales_charts(
             plot_revenue_trend,
             "revenue_trend.png",
         ),
+        (
+            # Needs only a Revenue column, so a dataset with no
+            # Product/Region/Date still gets one chart.
+            "revenue_distribution",
+            plot_revenue_distribution,
+            "revenue_distribution.png",
+        ),
     )
 
     charts: dict[str, str] = {}
