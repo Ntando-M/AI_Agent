@@ -1,0 +1,11 @@
+/* ============================================================
+ * AI Data Analyst — Angular Frontend v2
+ * Entry point: imports all style partials
+ * ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import './_tokens.css';
+@import './_reset.css';
+@import './_typography.css';
+@import './_animations.css';
+@import './_utilities.css';

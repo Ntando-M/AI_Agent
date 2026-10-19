@@ -1,0 +1,54 @@
+/* ---- Utility Classes ---- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.flex { display: flex; }
+.flex-col { display: flex; flex-direction: column; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.justify-center { justify-content: center; }
+.gap-1 { gap: var(--space-1); }
+.gap-2 { gap: var(--space-2); }
+.gap-3 { gap: var(--space-3); }
+.gap-4 { gap: var(--space-4); }
+.gap-6 { gap: var(--space-6); }
+
+.mt-1 { margin-top: var(--space-1); }
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mt-4 { margin-top: var(--space-4); }
+.mt-6 { margin-top: var(--space-6); }
+
+.mb-1 { margin-bottom: var(--space-1); }
+.mb-2 { margin-bottom: var(--space-2); }
+.mb-3 { margin-bottom: var(--space-3); }
+.mb-4 { margin-bottom: var(--space-4); }
+.mb-6 { margin-bottom: var(--space-6); }
+
+.full-width { width: 100%; }
+.full-height { height: 100%; }
+
+/* ---- Icon Utilities ---- */
+.icon-inline { display: inline-flex; vertical-align: middle; margin-left: 0.25em; font-size: 0.85em; }
+.section-icon { display: inline-flex; vertical-align: middle; margin-right: 0.4em; font-size: 1em; }
+.check-icon { display: inline-flex; vertical-align: middle; margin-left: 0.2em; font-size: 0.85em; }
+.status-icon { display: inline-flex; vertical-align: middle; font-size: 0.85em; }
+.icon-btn-icon { display: block; font-size: 1em; }
+.avatar-icon { display: block; font-size: 1.25rem; }
+.drop-icon { display: block; font-size: 2rem; color: var(--text-tertiary); }
+.toast-icon { display: block; font-size: 1.25rem; }
+.error-icon { display: block; font-size: 1.25rem; }
+.collapse-icon { display: block; font-size: 1.1rem; }
+.sidebar-icon { display: block; font-size: 1.25rem; }
+.chevron { display: inline-flex; vertical-align: middle; margin-right: 0.3em; font-size: 0.75em; }
+.tool-check-icon { display: inline-flex; vertical-align: middle; margin-right: 0.3em; font-size: 0.85em; color: var(--status-success); }
+.active-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--status-success); margin-right: 0.3em; }

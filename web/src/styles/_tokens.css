@@ -1,0 +1,170 @@
+/* ============================================================
+ * Design Tokens — Color, Typography, Spacing, Animation
+ * Dark mode is default; light mode via [data-theme="light"]
+ * ============================================================ */
+
+:root {
+  /* ── Backgrounds (luminance stack) ── */
+  --bg-canvas:        #0a0b0d;
+  --bg-surface:        #111318;
+  --bg-elevated:      #1a1d24;
+  --bg-overlay:       rgba(0, 0, 0, 0.6);
+  --bg-hover:         rgba(255, 255, 255, 0.04);
+  --bg-active:         rgba(255, 255, 255, 0.08);
+
+  /* ── Text ── */
+  --text-primary:     #f0f2f5;
+  --text-secondary:   #b8bfcc;
+  --text-tertiary:    #7d8590;
+  --text-quaternary:  #4d5560;
+  --text-inverse:     #0a0b0d;
+
+  /* ── Brand (indigo/violet family) ── */
+  --brand-50:  #eef0ff;
+  --brand-100: #d9deff;
+  --brand-200: #b3bcff;
+  --brand-300: #8d9aff;
+  --brand-400: #6778ff;
+  --brand-500: #5e6ad2;
+  --brand-600: #4b58b8;
+  --brand-700: #3a4594;
+
+  /* ── Accent colors ── */
+  --accent-emerald: #10b981;
+  --accent-amber:   #f59e0b;
+  --accent-rose:    #f43f5e;
+  --accent-sky:     #0ea5e9;
+  --accent-violet:  #8b5cf6;
+  --accent-teal:    #14b8a6;
+
+  /* ── Status ── */
+  --status-success:     #10b981;
+  --status-success-bg:  rgba(16, 185, 129, 0.12);
+  --status-warning:     #f59e0b;
+  --status-warning-bg:  rgba(245, 158, 11, 0.12);
+  --status-error:       #ef4444;
+  --status-error-bg:    rgba(239, 68, 68, 0.12);
+  --status-info:        #0ea5e9;
+  --status-info-bg:     rgba(14, 165, 233, 0.12);
+
+  /* ── Borders ── */
+  --border-subtle:    rgba(255, 255, 255, 0.05);
+  --border-standard:  rgba(255, 255, 255, 0.09);
+  --border-strong:    rgba(255, 255, 255, 0.14);
+  --border-focus:     var(--brand-400);
+
+  /* ── Shadows ── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 20px rgba(94, 106, 210, 0.15);
+
+  /* ── Chart palette ── */
+  --chart-1: #5e6ad2;
+  --chart-2: #10b981;
+  --chart-3: #f59e0b;
+  --chart-4: #f43f5e;
+  --chart-5: #0ea5e9;
+  --chart-6: #8b5cf6;
+
+  /* ── Typography ── */
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  --text-xs:   0.6875rem;
+  --text-sm:   0.75rem;
+  --text-base: 0.875rem;
+  --text-md:   1rem;
+  --text-lg:   1.125rem;
+  --text-xl:   1.25rem;
+  --text-2xl:  1.5rem;
+  --text-3xl:  2rem;
+  --text-4xl:  2.5rem;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.75;
+
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+
+  /* ── Spacing (4px base grid) ── */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  --page-padding: var(--space-6);
+  --card-padding: var(--space-5);
+  --section-gap: var(--space-8);
+  --component-gap: var(--space-4);
+
+  /* ── Border Radius ── */
+  --radius-xs:  4px;
+  --radius-sm:  6px;
+  --radius-md:  8px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
+  --radius-2xl: 24px;
+  --radius-full: 9999px;
+
+  /* ── Elevation ── */
+  --shadow-card: var(--shadow-sm);
+  --shadow-elevated: var(--shadow-md);
+  --shadow-modal: var(--shadow-lg);
+  --shadow-glow-brand: var(--shadow-glow);
+  --shadow-inset: inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+
+  /* ── Animation ── */
+  --duration-instant: 100ms;
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ── Layout ── */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 72px;
+  --header-height: 64px;
+}
+
+[data-theme="light"] {
+  --bg-canvas:        #f8f9fb;
+  --bg-surface:        #ffffff;
+  --bg-elevated:      #ffffff;
+  --bg-overlay:       rgba(0, 0, 0, 0.3);
+  --bg-hover:         rgba(0, 0, 0, 0.04);
+  --bg-active:         rgba(0, 0, 0, 0.06);
+
+  --text-primary:     #1a1d24;
+  --text-secondary:   #4d5560;
+  --text-tertiary:    #7d8590;
+  --text-quaternary:  #a0a8b3;
+  --text-inverse:     #ffffff;
+
+  --border-subtle:    rgba(0, 0, 0, 0.06);
+  --border-standard:  rgba(0, 0, 0, 0.10);
+  --border-strong:    rgba(0, 0, 0, 0.16);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.10);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.14);
+  --shadow-glow: 0 0 20px rgba(94, 106, 210, 0.08);
+  --shadow-inset: inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+}
