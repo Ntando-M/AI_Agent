@@ -158,7 +158,7 @@ def test_save_report_summary(
     )
 
     assert (
-        "AI DATA ANALYST - V7 SALES REPORT"
+        "AI DATA ANALYST - DATASET REPORT"
         in content
     )
 
@@ -169,10 +169,5 @@ def test_save_report_summary(
 
     assert (
         "REVENUE BY PRODUCT"
-        in content
-    )
-
-    assert (
-        "REVENUE BY REGION"
         in content
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,7 @@ from data_analysis.analyzer import (
     inspect_dataset,
 )
 from data_analysis.charts import (
-    generate_standard_sales_charts,
+    generate_standard_charts,
 )
 
 
@@ -23,7 +24,7 @@ DEFAULT_REPORT_DIRECTORY = Path(
 
 def _find_column(
     dataframe: pd.DataFrame,
-    candidates: list[str],
+    candidates: Sequence[str],
 ) -> str | None:
     """
     Find the first column whose lowercase name matches
@@ -54,6 +55,69 @@ def _find_column(
                 return original
 
     return None
+
+
+MEASURE_COLUMN_CANDIDATES = (
+    "revenue",
+    "sales",
+    "amount",
+    "total",
+    "income",
+    "turnover",
+    "profit",
+    "price",
+    "value",
+    "salary",
+    "wage",
+    "spend",
+    "cost",
+    "fee",
+    "charge",
+    "budget",
+)
+
+MEASURE_COLUMN_SYNONYMS = tuple(
+    dict.fromkeys(
+        MEASURE_COLUMN_CANDIDATES + ("units",)
+    )
+)
+
+PRODUCT_COLUMN_SYNONYMS = (
+    "Product",
+    "product",
+    "Item",
+    "item",
+    "Category",
+    "category",
+    "SKU",
+    "sku",
+)
+
+REGION_COLUMN_SYNONYMS = (
+    "Region",
+    "region",
+    "Location",
+    "location",
+    "City",
+    "city",
+    "Country",
+    "country",
+    "Store",
+    "store",
+)
+
+DATE_COLUMN_SYNONYMS = (
+    "Date",
+    "date",
+    "Month",
+    "month",
+    "Year",
+    "year",
+    "Period",
+    "period",
+    "Time",
+    "time",
+)
 
 
 def _is_identifier(column: object) -> bool:
@@ -99,15 +163,7 @@ def _find_numeric_column(
         and not _is_identifier(column)
     ]
 
-    for candidate in (
-        "revenue",
-        "sales",
-        "amount",
-        "total",
-        "income",
-        "price",
-        "value",
-    ):
+    for candidate in MEASURE_COLUMN_CANDIDATES:
         for column in numeric:
             if candidate in str(column).lower():
                 return column
@@ -169,6 +225,129 @@ def _categorical_counts(
     return counts
 
 
+def _find_measure_column(
+    dataframe: pd.DataFrame,
+) -> str | None:
+    """
+    The column a report measures, whatever the dataset.
+
+    A recognised money-shaped column wins when it is numeric;
+    otherwise the first numeric column that is not a surrogate
+    key is the measure. A score, an age or a count is a
+    measure like any other, and reporting only works when one
+    exists, so this falls through to a plain numeric column
+    rather than returning None for a non-sales table.
+    """
+
+    recognised = _find_column(
+        dataframe,
+        [
+            synonym.capitalize()
+            for synonym in MEASURE_COLUMN_SYNONYMS
+        ],
+    )
+
+    if recognised is not None and (
+        pd.api.types.is_numeric_dtype(
+            dataframe[recognised]
+        )
+    ):
+        return recognised
+
+    return _find_numeric_column(dataframe)
+
+
+def _is_additive(column: str | None) -> bool:
+    """
+    Whether summing a column means anything.
+
+    Money sums: total revenue is revenue. Extensive measures
+    like counts and amounts sum too. An age, a score, a
+    rating or a percentage does not - summing the ages of
+    everyone in a room is a number that describes nothing -
+    so for those the measure is aggregated by its mean
+    instead, which is the statistic that does carry meaning.
+    """
+
+    if column is None:
+        return False
+
+    name = str(column).lower()
+
+    if any(hint in name for hint in MONETARY_COLUMN_HINTS):
+        return True
+
+    return not any(
+        hint in name
+        for hint in (
+            "age",
+            "score",
+            "rating",
+            "percent",
+            "rate",
+            "ratio",
+            "avg",
+            "average",
+            "mean",
+            "temperature",
+            "temp",
+        )
+    )
+
+
+def _measure_aggregation(column: str | None) -> str:
+    """
+    The aggregation a measure column is grouped by.
+    """
+
+    return "sum" if _is_additive(column) else "mean"
+
+
+def _find_groupable_column(
+    dataframe: pd.DataFrame,
+    measure_column: str | None,
+    date_column: str | None,
+) -> str | None:
+    """
+    The first non-numeric column with a readable number of
+    distinct values, for grouping a measure that has no
+    named Product or Region column.
+
+    A column whose every row differs - an email, an ip
+    address - produces one group per row, which is a
+    listing rather than a grouping, so it is skipped.
+    'Too many groups to be a category' is capped at the row
+    count, which keeps a dataset with a handful of rows
+    groupable while refusing a free-text column.
+
+    The measure column itself is excluded: a column cannot
+    group itself into a total.
+    """
+
+    for column in dataframe.columns:
+        if column in (measure_column, date_column):
+            continue
+
+        if pd.api.types.is_numeric_dtype(
+            dataframe[column]
+        ):
+            continue
+
+        distinct = (
+            dataframe[column].dropna().nunique()
+        )
+
+        if distinct == 0 or distinct >= len(dataframe):
+            continue
+
+        if distinct > 50:
+            continue
+
+        return str(column)
+
+    return None
+
+
 def build_dataset_summary(
     dataframe: pd.DataFrame,
 ) -> dict[str, Any]:
@@ -192,149 +371,110 @@ def build_dataset_summary(
         ],
     }
 
-    revenue_col = _find_column(
-        dataframe,
-        [
-            "Revenue",
-            "revenue",
-            "Sales",
-            "sales",
-            "Amount",
-            "amount",
-            "Total",
-            "total",
-            "Income",
-            "income",
-        ],
-    )
+    measure_col = _find_measure_column(dataframe)
 
-    if revenue_col:
-        revenue_statistics = (
+    if measure_col:
+        measure_statistics = (
             calculate_statistics(
                 dataframe,
-                revenue_col,
+                measure_col,
             )
         )
 
         summary["revenue_statistics"] = (
-            revenue_statistics
+            measure_statistics
         )
 
     product_col = _find_column(
         dataframe,
-        [
-            "Product",
-            "product",
-            "Item",
-            "item",
-            "Category",
-            "category",
-            "SKU",
-            "sku",
-        ],
+        PRODUCT_COLUMN_SYNONYMS,
     )
-
-    if product_col and revenue_col:
-        product_revenue = group_by_column(
-            dataframe,
-            product_col,
-            revenue_col,
-            "sum",
-        )
-
-        product_revenue = (
-            product_revenue
-            .sort_values(
-                revenue_col,
-                ascending=False,
-            )
-        )
-
-        summary["revenue_by_product"] = (
-            product_revenue.to_dict(
-                orient="records"
-            )
-        )
 
     region_col = _find_column(
         dataframe,
-        [
-            "Region",
-            "region",
-            "Location",
-            "location",
-            "City",
-            "city",
-            "Country",
-            "country",
-            "Store",
-            "store",
-        ],
+        REGION_COLUMN_SYNONYMS,
     )
-
-    if region_col and revenue_col:
-        region_revenue = group_by_column(
-            dataframe,
-            region_col,
-            revenue_col,
-            "sum",
-        )
-
-        region_revenue = (
-            region_revenue
-            .sort_values(
-                revenue_col,
-                ascending=False,
-            )
-        )
-
-        summary["revenue_by_region"] = (
-            region_revenue.to_dict(
-                orient="records"
-            )
-        )
 
     date_col = _find_column(
         dataframe,
-        [
-            "Date",
-            "date",
-            "Month",
-            "month",
-            "Year",
-            "year",
-            "Period",
-            "period",
-            "Time",
-            "time",
-        ],
+        DATE_COLUMN_SYNONYMS,
     )
 
     summary["_detected_columns"] = {
-        "revenue": revenue_col,
+        "revenue": measure_col,
         "product": product_col,
         "region": region_col,
         "date": date_col,
     }
 
-    if revenue_col is None:
-        # No sales column, so the revenue-specific sections
-        # above are all absent. Describe the columns that are
-        # present instead, or the report has nothing to say.
-        general_column = _find_numeric_column(
-            dataframe
+    # The first categorical column with a manageable number
+    # of distinct values, for grouping a measure that has no
+    # named Product or Region column. A 'Department' or
+    # 'Team' column is as readable a grouping as either, and
+    # a report that only groups by a handful of hardcoded
+    # names is not general.
+    #
+    # It is looked for even when the dataset has no measure,
+    # so a text-only table still gets one chart of its own
+    # shape. Summing is skipped in that case, since there is
+    # nothing to sum.
+    groupable_col = product_col or region_col
+
+    if groupable_col is None:
+        groupable_col = _find_groupable_column(
+            dataframe,
+            measure_col,
+            date_col,
         )
 
-        if general_column is not None:
-            summary["general_statistics"] = (
-                calculate_statistics(
-                    dataframe,
-                    general_column,
-                )
+    if groupable_col and measure_col:
+        measure_by_group = group_by_column(
+            dataframe,
+            groupable_col,
+            measure_col,
+            _measure_aggregation(measure_col),
+        )
+
+        measure_by_group = (
+            measure_by_group
+            .sort_values(
+                measure_col,
+                ascending=False,
             )
+        )
 
-        summary["general_column"] = general_column
+        summary["revenue_by_product"] = (
+            measure_by_group.to_dict(
+                orient="records"
+            )
+        )
 
+        summary["_detected_columns"]["grouped_by"] = (
+            groupable_col
+        )
+
+        # A named grouping and a found one are not the same
+        # claim: 'by Product' and 'by Department' are
+        # business language, but a grouping discovered by
+        # scanning the columns is a heuristic, so the report
+        # says how it was chosen rather than asserting it.
+        summary["_detected_columns"]["grouped_by_named"] = (
+            product_col is not None or region_col is not None
+        )
+
+    # The column the report describes in prose. When a
+    # category groups the measure, the measure is named in
+    # every grouped finding and no separate column needs
+    # describing; otherwise the measure column is the one
+    # thing the dataset measures, so it is the one described.
+    summary["general_column"] = (
+        None if groupable_col else measure_col
+    )
+
+    if measure_col is None:
+        # No numeric column at all, so no measure exists to
+        # group. Describe the columns that are present
+        # instead, or the report has nothing to say.
         summary["categorical_counts"] = (
             _categorical_counts(
                 dataframe,
@@ -349,6 +489,34 @@ def build_dataset_summary(
                     date_col,
                 )
             )
+
+        return summary
+
+    if groupable_col is None:
+        # A measure column exists but nothing is recognised
+        # to group it by. Its own distribution is still
+        # arithmetic worth reporting.
+        summary["general_statistics"] = (
+            calculate_statistics(
+                dataframe,
+                measure_col,
+            )
+        )
+
+        summary["categorical_counts"] = (
+            _categorical_counts(
+                dataframe,
+                date_col,
+            )
+        )
+
+    if date_col:
+        summary["records_by_period"] = (
+            _records_by_period(
+                dataframe,
+                date_col,
+            )
+        )
 
     return summary
 
@@ -407,14 +575,186 @@ def _format_number(value: float) -> str:
 
     The general summary describes whatever numeric column a
     dataset has - an id, an age, a score - and prefixing those
-    with a currency symbol would misrepresent them.
+    with a currency symbol would misrepresent them. A whole
+    number is rendered without decimals, so a count is not
+    printed as '1,234.00'.
     """
+
+    if float(value).is_integer():
+        return f"{value:,.0f}"
 
     return f"{value:,.2f}"
 
 
 def _percent(value: float) -> str:
     return f"{value:.1f}%"
+
+
+MONETARY_COLUMN_HINTS = (
+    "revenue",
+    "sales",
+    "amount",
+    "total",
+    "income",
+    "price",
+    "value",
+    "turnover",
+    "profit",
+    "cost",
+    "spend",
+    "salary",
+    "wage",
+    "fee",
+    "charge",
+    "budget",
+)
+
+
+def _is_monetary(column: str) -> bool:
+    """
+    Whether a column name suggests money.
+
+    The report must not prefix a figure with a currency
+    symbol unless the column is known to hold money: an
+    age, a score or a count would be misrepresented by
+    one. Matched as a substring so 'unit_price' and
+    'salary' both qualify.
+    """
+
+    name = str(column).lower()
+
+    return any(
+        hint in name for hint in MONETARY_COLUMN_HINTS
+    )
+
+
+def _measure_noun(column: str | None) -> str:
+    """
+    The word the report uses for the measure column.
+
+    A column named for revenue or sales is reported as
+    'revenue', which keeps the existing sales wording.
+    Any other column is named as it appears in the
+    dataset, so an 'Amount' column is never called
+    revenue and a 'Salary' column is never called
+    revenue.
+    """
+
+    if column is None:
+        return "value"
+
+    name = str(column)
+
+    if (
+        "revenue" in name.lower()
+        or "sales" in name.lower()
+    ):
+        return "revenue"
+
+    return name
+
+
+def _is_money_measure(column: str | None) -> bool:
+    """
+    Whether the measure column is the sales/revenue one.
+
+    Kept separate from _is_monetary, which is used to decide
+    whether a figure gets a currency symbol. 'Salary' is
+    monetary, so its figures are rendered as money, but it is
+    not the sales measure - and the sales-specific wording
+    ('revenue', 'pricing changes') belongs to revenue alone.
+    """
+
+    if column is None:
+        return False
+
+    return _measure_noun(column) == "revenue"
+
+
+def _capitalise(value: str) -> str:
+    return value[:1].upper() + value[1:]
+
+
+def _cause_context(column: str | None) -> str:
+    """
+    The kind of event that could explain a movement in a
+    measure column.
+
+    A recommendation that tells the reader to look for
+    'pricing changes' is only useful for money data; the same
+    advice against a count of incidents or a test score sends
+    them looking for the wrong cause. Non-monetary measures
+    get neutral wording.
+    """
+
+    if _is_money_measure(column):
+        return "strategy or pricing changes"
+
+    return "operational changes"
+
+
+def _pluralise(column: str) -> str:
+    """
+    A readable plural for a column name.
+
+    'Product' becomes 'Products' and 'Category' becomes
+    'Categories', so a sentence can say 'across all
+    products' rather than naming the column.
+    """
+
+    name = str(column)
+    lowered = name.lower()
+
+    if lowered.endswith("ies"):
+        return f"{name[:-3]}ies"
+
+    if lowered.endswith(("_s", "ss", "x", "ch", "sh")):
+        return f"{name}es"
+
+    if (
+        lowered.endswith("y")
+        and len(name) > 1
+        and name[-2].lower() not in "aeiou"
+    ):
+        return f"{name[:-1]}ies"
+
+    return f"{name}s"
+
+
+def _singular(column: str) -> str:
+    """
+    A readable singular for a column name.
+
+    'Products' becomes 'Product'. Used where a sentence
+    names one row's category rather than the whole set.
+    """
+
+    name = str(column)
+    lowered = name.lower()
+
+    if lowered.endswith("ies"):
+        return f"{name[:-3]}y"
+
+    if lowered.endswith("s") and not lowered.endswith("ss"):
+        return name[:-1]
+
+    return name
+
+
+def _format_value(column: str | None, value: float) -> str:
+    """
+    Render a measure column's figure in its own unit.
+
+    Money columns get the currency form; anything else - a
+    count, an age, a score - gets the neutral form, because
+    a currency symbol on a non-monetary value is a false
+    claim about what the column holds.
+    """
+
+    if column and _is_monetary(column):
+        return _format_currency(value)
+
+    return _format_number(value)
 
 
 def build_finding_layers(
@@ -459,89 +799,131 @@ def build_finding_layers(
         )
 
     detected = summary.get("_detected_columns", {})
-    revenue_col = detected.get("revenue")
-    product_col = detected.get("product")
-    region_col = detected.get("region")
+    measure_col = detected.get("revenue")
     date_col = detected.get("date")
+    group_col = detected.get("grouped_by")
 
-    product_rows = summary.get(
-        "revenue_by_product"
+    group_rows = summary.get("revenue_by_product")
+
+    measure_noun = _measure_noun(measure_col)
+
+    grouped_total = None
+
+    grouped_by_named = detected.get("grouped_by_named")
+
+    # How the measure is combined within a group. A total
+    # only means something for an additive measure, so the
+    # same rule the summary used decides both the arithmetic
+    # and the word used to describe it.
+    aggregation = _measure_aggregation(measure_col)
+    aggregate_word = (
+        "total" if aggregation == "sum" else "average"
     )
 
-    region_rows = summary.get(
-        "revenue_by_region"
-    )
+    if group_rows and measure_col:
+        if aggregation == "sum":
+            grouped_total = sum(
+                row[measure_col] for row in group_rows
+            )
+        else:
+            grouped_total = (
+                sum(row[measure_col] for row in group_rows)
+                / len(group_rows)
+            )
 
-    revenue_sum = None
-
-    if product_rows and revenue_col:
-        revenue_sum = sum(
-            row[revenue_col]
-            for row in product_rows
+        group_word = (
+            _pluralise(group_col).lower()
+            if grouped_by_named
+            else f"{group_col.lower()} groups"
         )
 
         facts.append(
-            f"Total revenue across all products is "
-            f"{_format_currency(revenue_sum)}."
+            f"{_capitalise(aggregate_word)} {measure_noun} "
+            f"across all {group_word} is "
+            f"{_format_value(measure_col, grouped_total)}."
         )
 
     if (
-        product_rows
-        and revenue_sum
-        and product_col
+        group_rows
+        and grouped_total
+        and group_col
     ):
-        top_product = product_rows[0]
+        top_group = group_rows[0]
+
+        group_label = (
+            _singular(group_col).lower()
+            if grouped_by_named
+            else f"{group_col.lower()} group"
+        )
 
         facts.append(
-            f"The highest-revenue product is "
-            f"{top_product[product_col]} at "
-            f"{_format_currency(top_product[revenue_col])}."
+            f"The highest-{measure_noun} "
+            f"{group_label} is "
+            f"{top_group[group_col]} at "
+            f"{_format_value(measure_col, top_group[measure_col])}."
         )
 
         share = (
-            top_product[revenue_col] / revenue_sum * 100
+            top_group[measure_col] / grouped_total * 100
         )
 
-        findings.append(
-            f"{top_product[product_col]} accounts for "
-            f"{_percent(share)} of total revenue."
-        )
+        if aggregation == "sum":
+            findings.append(
+                f"{top_group[group_col]} accounts for "
+                f"{_percent(share)} of total {measure_noun}."
+            )
+        else:
+            # A share of a mean is not a share: it is how far
+            # this group's average sits above or below the
+            # overall average, expressed as a percentage.
+            deviation = (
+                (top_group[measure_col] - grouped_total)
+                / grouped_total
+                * 100
+            )
 
-        if share >= 50:
+            findings.append(
+                f"{top_group[group_col]} averages "
+                f"{_format_value(measure_col, top_group[measure_col])}, "
+                f"which is {abs(deviation):.1f}% "
+                f"{'above' if deviation > 0 else 'below'} "
+                f"the overall average of "
+                f"{_format_value(measure_col, grouped_total)}."
+            )
+
+        # A single group is not concentration, it is the
+        # whole dataset: claiming a dominant category from
+        # one row would be a claim the data cannot support.
+        # Nor is a group whose average is highest
+        # 'concentrated' - that is a difference in level, not
+        # a share of a total.
+        if (
+            share >= 50
+            and len(group_rows) > 1
+            and aggregation == "sum"
+        ):
             interpretations.append(
-                f"Revenue appears concentrated in "
-                f"{top_product[product_col]}, which alone "
+                f"{_capitalise(measure_noun)} appears "
+                f"concentrated in "
+                f"{top_group[group_col]}, which alone "
                 f"exceeds half of the total."
             )
 
             recommendations.append(
                 f"Review the pipeline feeding "
-                f"{top_product[product_col]} - concentration "
-                f"of this size makes overall revenue "
+                f"{top_group[group_col]} - concentration "
+                f"of this size makes overall {measure_noun} "
                 f"sensitive to that one category."
             )
 
-    if (
-        region_rows
-        and revenue_sum
-        and region_col
-    ):
-        top_region = region_rows[0]
-
-        findings.append(
-            f"{top_region[region_col]} generates the most "
-            f"revenue at "
-            f"{_format_currency(top_region[revenue_col])}."
-        )
-
     monthly = None
 
-    if date_col and revenue_col:
+    if date_col and measure_col:
         monthly = (
             calculate_monthly_revenue(
                 dataframe,
                 date_col,
-                revenue_col,
+                measure_col,
             )
             .sort_values("Month")
         )
@@ -553,21 +935,19 @@ def build_finding_layers(
         first_month = monthly.iloc[0]
         last_month = monthly.iloc[-1]
 
-        if first_month["Revenue"]:
+        first_value = first_month[measure_col]
+        last_value = last_month[measure_col]
+
+        if first_value:
             change = (
-                (
-                    last_month["Revenue"]
-                    - first_month["Revenue"]
-                )
-                / first_month["Revenue"]
-                * 100
+                (last_value - first_value) / first_value * 100
             )
 
             findings.append(
-                f"Revenue moved from "
-                f"{_format_currency(first_month['Revenue'])} "
+                f"{_capitalise(measure_noun)} moved from "
+                f"{_format_value(measure_col, first_value)} "
                 f"in {first_month['Month']} to "
-                f"{_format_currency(last_month['Revenue'])} "
+                f"{_format_value(measure_col, last_value)} "
                 f"in {last_month['Month']}, a change of "
                 f"{change:+.1f}%."
             )
@@ -582,14 +962,16 @@ def build_finding_layers(
                 recommendations.append(
                     f"Correlate the movement in "
                     f"{last_month['Month']} with any "
-                    f"documented strategy or pricing "
-                    f"changes before acting on it."
+                    f"documented "
+                    f"{_cause_context(measure_col)} "
+                    f"before acting on it."
                 )
 
             elif change > 0:
                 interpretations.append(
-                    f"Revenue appears to be growing across "
-                    f"the period covered by the dataset."
+                    f"{_capitalise(measure_noun)} appears to "
+                    f"be growing across the period covered "
+                    f"by the dataset."
                 )
 
     general_column = summary.get("general_column")
@@ -597,13 +979,26 @@ def build_finding_layers(
     if general_column:
         statistics = summary["general_statistics"]
 
-        findings.append(
-            f"{general_column} ranges from "
-            f"{_format_number(statistics['min'])} to "
-            f"{_format_number(statistics['max'])}, "
-            f"averaging {_format_number(statistics['mean'])} "
-            f"across {int(statistics['count'])} records."
-        )
+        # A single row, or a column with no variation, makes
+        # min, max and mean the same number: the sentence
+        # would read 'ranges from 100 to 100, averaging
+        # 100', which is a restatement rather than a
+        # finding. Report the value once instead.
+        if statistics["min"] == statistics["max"]:
+            findings.append(
+                f"{general_column} is "
+                f"{_format_value(general_column, statistics['min'])} "
+                f"for all {int(statistics['count'])} records."
+            )
+        else:
+            findings.append(
+                f"{general_column} ranges from "
+                f"{_format_value(general_column, statistics['min'])} to "
+                f"{_format_value(general_column, statistics['max'])}, "
+                f"averaging "
+                f"{_format_value(general_column, statistics['mean'])} "
+                f"across {int(statistics['count'])} records."
+            )
 
     records_by_period = summary.get(
         "records_by_period"
@@ -642,18 +1037,14 @@ def build_finding_layers(
         )
 
     if not findings:
-        if revenue_col is None:
-            findings.append(
-                "The dataset has no revenue column and no "
-                "numeric column, so no calculated findings "
-                "could be derived."
-            )
-        else:
-            findings.append(
-                "A revenue column is present but no Product, "
-                "Region or Date column accompanies it, so no "
-                "grouped findings could be derived."
-            )
+        # Reached only when the dataset has no numeric column
+        # at all and no repeating category to count: a table
+        # of unique text values, which has no arithmetic.
+        findings.append(
+            "The dataset has no numeric column to measure "
+            "and no repeating category to count, so no "
+            "calculated findings could be derived."
+        )
 
     return {
         "facts": facts,
@@ -673,6 +1064,11 @@ def generate_sales_report(
     """
     Generate a complete deterministic V7
     analytical report.
+
+    Works for any tabular dataset, not only sales data:
+    the measure column is whichever numeric column the
+    dataset carries, and the grouping column is whichever
+    categorical column it carries.
 
     Returns:
         A dictionary containing the summary
@@ -701,7 +1097,7 @@ def generate_sales_report(
         summary,
     )
 
-    charts = generate_standard_sales_charts(
+    charts = generate_standard_charts(
         dataframe,
         output_directory=chart_directory,
     )
@@ -784,7 +1180,7 @@ def save_report_summary(
     lines: list[str] = []
 
     lines.append(
-        "AI DATA ANALYST - V7 SALES REPORT"
+        "AI DATA ANALYST - DATASET REPORT"
     )
     lines.append(
         "=" * 40
@@ -844,13 +1240,18 @@ def save_report_summary(
     )
     lines.append("")
 
+    detected = summary.get("_detected_columns", {})
+    measure_col = detected.get("revenue")
+    group_col = detected.get("grouped_by")
+    measure_noun = _measure_noun(measure_col)
+
     if "revenue_statistics" in summary:
         statistics = summary[
             "revenue_statistics"
         ]
 
         lines.append(
-            "REVENUE STATISTICS"
+            f"{_capitalise(measure_noun).upper()} STATISTICS"
         )
         lines.append(
             "-" * 40
@@ -858,7 +1259,8 @@ def save_report_summary(
 
         for key, value in statistics.items():
             lines.append(
-                f"{key}: {value}"
+                f"{key}: "
+                f"{_format_value(measure_col, value)}"
             )
 
         lines.append("")
@@ -876,7 +1278,10 @@ def save_report_summary(
         for key, value in summary[
             "general_statistics"
         ].items():
-            lines.append(f"{key}: {value}")
+            lines.append(
+                f"{key}: "
+                f"{_format_value(general_column, value)}"
+            )
 
         lines.append("")
 
@@ -912,14 +1317,10 @@ def save_report_summary(
 
         lines.append("")
 
-    detected = summary.get("_detected_columns", {})
-    revenue_col = detected.get("revenue", "Revenue")
-    product_col = detected.get("product", "Product")
-    region_col = detected.get("region", "Region")
-
     if "revenue_by_product" in summary:
         lines.append(
-            f"REVENUE BY {product_col.upper()}"
+            f"{_capitalise(measure_noun).upper()} "
+            f"BY {group_col.upper()}"
         )
         lines.append(
             "-" * 40
@@ -929,26 +1330,8 @@ def save_report_summary(
             "revenue_by_product"
         ]:
             lines.append(
-                f"{row[product_col]}: "
-                f"{row[revenue_col]}"
-            )
-
-        lines.append("")
-
-    if "revenue_by_region" in summary:
-        lines.append(
-            f"REVENUE BY {region_col.upper()}"
-        )
-        lines.append(
-            "-" * 40
-        )
-
-        for row in summary[
-            "revenue_by_region"
-        ]:
-            lines.append(
-                f"{row[region_col]}: "
-                f"{row[revenue_col]}"
+                f"{row[group_col]}: "
+                f"{_format_value(measure_col, row[measure_col])}"
             )
 
         lines.append("")

@@ -374,17 +374,17 @@ def test_no_revenue_column_still_reports_a_finding():
     )
 
 
-def test_revenue_column_without_grouping_columns_is_not_called_missing():
+def test_measure_column_with_no_variation_says_so_once():
     """
-    The fallback must state the actual blocker. A revenue
-    column with no Product/Region/Date to group by used to be
-    reported as 'no revenue column was available', which was
-    false and sent a reader looking for the wrong thing.
+    A single row, or a column with no variation, must not be
+    reported as 'ranges from 100 to 100, averaging 100' -
+    that restates one number three times. The value is
+    stated once instead.
     """
 
     dataframe = pd.DataFrame(
         {
-            "Revenue": [100.0, 250.0],
+            "Revenue": [100.0],
         }
     )
 
@@ -397,13 +397,13 @@ def test_revenue_column_without_grouping_columns_is_not_called_missing():
         summary,
     )
 
-    assert not any(
-        "No revenue column" in entry
+    assert any(
+        "is R100.00 for all 1 records" in entry
         for entry in result["calculated_findings"]
     )
 
-    assert any(
-        "no Product, Region or Date column" in entry
+    assert not any(
+        "ranges from" in entry
         for entry in result["calculated_findings"]
     )
 
@@ -493,8 +493,9 @@ def test_a_users_dataset_reports_real_findings():
 
 def test_a_dataset_with_nothing_to_calculate_says_so():
     """
-    Text columns only: the report must say it could derive
-    nothing, rather than silently returning an empty layer.
+    Text columns only, and every row distinct in each: the
+    report must say it could derive nothing, rather than
+    silently returning an empty layer.
     """
 
     dataframe = pd.DataFrame(
@@ -514,7 +515,8 @@ def test_a_dataset_with_nothing_to_calculate_says_so():
     )
 
     assert any(
-        "no revenue column and no numeric column" in entry
+        "no numeric column to measure and no "
+        "repeating category to count" in entry
         for entry in result["calculated_findings"]
     )
 
