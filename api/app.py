@@ -1072,7 +1072,7 @@ def create_app(
                         written,
                     )
                 )
-            except ValueError as exc:
+            except Exception as exc:
                 log_event(
                     request_logger,
                     logging.WARNING,

@@ -13,6 +13,7 @@ TestClient.
 import io
 import json
 import logging
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -232,6 +233,41 @@ def test_path_traversal_filename_is_neutralised(client):
     assert ".." not in payload["name"]
     assert "/" not in payload["name"]
     assert "\\" not in payload["name"]
+
+
+def test_hard_upload_failure_is_rejected_400_on_both_endpoints(
+    client,
+):
+    """
+    The dataset and document endpoints must respond identically
+    when a streamed upload cannot be read. A hard failure must
+    produce a 400 on both paths, not a 500 on one and a 400 on
+    the other.
+
+    Before the endpoint handler was aligned to the rest of the
+    app, the document path narrow-catched ValueError, so an
+    unreadable stream (an OSError from the body) leaked through
+    as a 500 while the dataset path returned 400.
+    """
+
+    class HardRead:
+        def read(self, *_):
+            raise OSError("stream closed")
+
+    fail_stream = SimpleNamespace(filename="data.csv", file=HardRead())
+
+    for endpoint, _ in (("/datasets", "dataset"), ("/documents", "document")):
+        response = client.post(
+            endpoint,
+            headers=AUTH,
+            files={"file": fail_stream},
+        )
+
+        assert response.status_code == 400, (
+            endpoint,
+            response.status_code,
+            response.text,
+        )
 
 
 def test_upload_without_auth_is_still_401(client):
