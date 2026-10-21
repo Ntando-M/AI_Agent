@@ -34,7 +34,7 @@
   <div class="header-actions">
     <button class="theme-toggle" (click)="toggleTheme()"
             [attr.aria-label]="themeSvc.theme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
-      {{ themeSvc.theme() === 'dark' ? '☀️' : '🌙' }}
+      <app-icon [name]="themeSvc.theme() === 'dark' ? 'sun' : 'moon'"></app-icon>
     </button>
   </div>
 </header>

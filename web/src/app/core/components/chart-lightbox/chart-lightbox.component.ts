@@ -1,8 +1,10 @@
 import { Component, Input, Output, EventEmitter } from '@angular/core';
+import { AppIconComponent } from '../app-icon/app-icon.component';
 
 @Component({
   selector: 'app-chart-lightbox',
   standalone: true,
+  imports: [AppIconComponent],
   templateUrl: './chart-lightbox.component.html',
   styleUrls: ['./chart-lightbox.component.css'],
 })

@@ -1,7 +1,7 @@
 @if (src) {
   <div class="lightbox-backdrop" (click)="onBackdropClick()">
     <div class="lightbox-container" (click)="$event.stopPropagation()">
-      <button class="lightbox-close" (click)="close.emit()" aria-label="Close">✕</button>
+      <button class="lightbox-close" (click)="close.emit()" aria-label="Close"><app-icon name="close" class="icon-btn-icon"></app-icon></button>
       <img [src]="src" [alt]="alt" class="lightbox-image" />
       @if (alt) {
         <p class="lightbox-caption">{{ alt }}</p>
