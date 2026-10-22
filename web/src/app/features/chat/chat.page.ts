@@ -7,11 +7,12 @@ import { AppStateService } from '../../core/services/app-state.service';
 import { DatasetStateService } from '../datasets/services/dataset-state.service';
 import { EmptyStateComponent } from '../../core/components/empty-state/empty-state.component';
 import { AppIconComponent } from '../../core/components/app-icon/app-icon.component';
+import { ConfirmDialogComponent } from '../../core/components/confirm-dialog/confirm-dialog.component';
 
 @Component({
   selector: 'app-chat',
   standalone: true,
-  imports: [CommonModule, FormsModule, EmptyStateComponent, AppIconComponent],
+  imports: [CommonModule, FormsModule, EmptyStateComponent, AppIconComponent, ConfirmDialogComponent],
   template: `
     <div class="chat-page">
       <!-- Session Sidebar -->
@@ -32,7 +33,7 @@ import { AppIconComponent } from '../../core/components/app-icon/app-icon.compon
               </div>
               <div class="session-actions">
                 <button class="icon-btn" (click)="renameSession(session.session_id, session.name); $event.stopPropagation()" aria-label="Rename"><app-icon name="edit" class="icon-btn-icon"></app-icon></button>
-                <button class="icon-btn" (click)="deleteSession(session.session_id); $event.stopPropagation()" aria-label="Delete"><app-icon name="close" class="icon-btn-icon"></app-icon></button>
+                <button class="icon-btn" (click)="confirmDelete.set(session.session_id); $event.stopPropagation()" aria-label="Delete"><app-icon name="close" class="icon-btn-icon"></app-icon></button>
               </div>
             </div>
           }
@@ -103,9 +104,9 @@ import { AppIconComponent } from '../../core/components/app-icon/app-icon.compon
                           <div class="confidence-meter">
                             <div class="confidence-label">Confidence</div>
                             <div class="confidence-bar">
-                              <div class="confidence-fill" [style.width.%]="turn.evidence.confidence"></div>
+                              <div class="confidence-fill" [style.width.%]="(turn.evidence.confidence*100)"></div>
                             </div>
-                            <span class="confidence-value">{{ turn.evidence.confidence }}%</span>
+                            <span class="confidence-value">{{ turn.evidence.confidence*100 }}%</span>
                           </div>
                         }
 
@@ -241,6 +242,17 @@ import { AppIconComponent } from '../../core/components/app-icon/app-icon.compon
             </div>
           </div>
         </div>
+      }
+
+      <!-- Delete Conversation Dialog -->
+      @if (confirmDelete()) {
+        <app-confirm-dialog
+          title="Delete Conversation"
+          message="This action cannot be undone. Delete this conversation and its messages?"
+          confirmLabel="Delete"
+          [danger]="true"
+          (confirm)="deleteSession()"
+          (cancel)="confirmDelete.set(null)" />
       }
     </div>
   `,
@@ -454,6 +466,7 @@ export class ChatPage implements OnInit {
   sidebarVisible = signal(false);
   showNewSession = signal(false);
   showRename = signal(false);
+  confirmDelete = signal<string | null>(null);
   newSessionName = '';
   renameValue = '';
   renameTargetId = '';
@@ -535,10 +548,11 @@ export class ChatPage implements OnInit {
     this.showRename.set(false);
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
-    if (confirm('Delete this conversation?')) {
-      await this.chatState.deleteSession(sessionId);
-    }
+  async deleteSession(): Promise<void> {
+    const sessionId = this.confirmDelete();
+    if (!sessionId) return;
+    await this.chatState.deleteSession(sessionId);
+    this.confirmDelete.set(null);
   }
 
   onDatasetChange(): void {
