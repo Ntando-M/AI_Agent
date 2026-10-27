@@ -73,7 +73,7 @@ import { AppIconComponent } from '../../core/components/app-icon/app-icon.compon
           <div class="card datasets-card">
             <div class="card-header">
               <h3 class="card-title">Datasets</h3>
-              <a routerLink="/datasets" class="card-link"><app-icon name="arrow-right" class="icon-inline"></app-icon> Manage</a>
+              <a (click)="router.navigate(['/datasets'])" class="card-link"><app-icon name="arrow-right" class="icon-inline"></app-icon> Manage</a>
             </div>
             <div class="dataset-list">
               @for (ds of datasetState.datasetList(); track ds.name) {
@@ -92,7 +92,7 @@ import { AppIconComponent } from '../../core/components/app-icon/app-icon.compon
           <div class="card documents-card">
             <div class="card-header">
               <h3 class="card-title">Documents</h3>
-              <a routerLink="/documents" class="card-link"><app-icon name="arrow-right" class="icon-inline"></app-icon> Manage</a>
+              <a (click)="router.navigate(['/documents'])" class="card-link"><app-icon name="arrow-right" class="icon-inline"></app-icon> Manage</a>
             </div>
             <div class="document-list">
               @for (doc of documentState.documents(); track doc) {
@@ -111,7 +111,7 @@ import { AppIconComponent } from '../../core/components/app-icon/app-icon.compon
         <section class="recent-reports">
           <div class="section-header">
             <h2>Recent Reports</h2>
-            <a routerLink="/reports" class="card-link"><app-icon name="arrow-right" class="icon-inline"></app-icon> View all</a>
+            <a (click)="router.navigate(['/reports'])" class="card-link"><app-icon name="arrow-right" class="icon-inline"></app-icon> View all</a>
           </div>
           @if (recentReports().length > 0) {
             <div class="report-cards">
@@ -203,6 +203,10 @@ import { AppIconComponent } from '../../core/components/app-icon/app-icon.compon
     }
     .card-title { font-size: var(--text-md); font-weight: var(--weight-semibold); }
     .card-link { font-size: var(--text-sm); text-decoration: none; }
+    .card-link:hover {
+      text-decoration: underline;
+      cursor: pointer;
+    }
 
     .status-row {
       display: flex; align-items: center; gap: var(--space-2);
